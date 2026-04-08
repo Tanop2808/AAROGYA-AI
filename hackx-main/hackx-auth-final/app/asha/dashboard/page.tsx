@@ -1,0 +1,233 @@
+"use client";
+import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback } from "react";
+import { useSession, signOut } from "next-auth/react";
+import { useLang } from "@/lib/useLang";
+
+const C = { primary: "#1B6CA8", green: "#1E8449", red: "#C0392B", yellow: "#F39C12", purple: "#7D3C98", bg: "#F0F4F8", card: "#FFFFFF", text: "#1A2332", muted: "#6B7C93", border: "#DDE3EC" };
+
+type Patient = { _id: string; name: string; phone: string; age?: number; gender?: string; village?: string; conditions?: string[]; };
+type Visit   = { _id: string; patientName: string; patientPhone: string; visitDate: string; notes: string; appLearned: boolean; createdAt: string; };
+
+function timeAgo(dateStr: string) {
+  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7)  return `${days} days ago`;
+  return `${Math.floor(days / 7)} week(s) ago`;
+}
+
+export default function ASHADashboardPage() {
+  const router = useRouter();
+  const { data: session, status } = useSession();
+  const { lang, setLang, mounted } = useLang();
+  const [activeTab, setActiveTab]     = useState<"patients" | "visits" | "stats">("patients");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [patients, setPatients]       = useState<Patient[]>([]);
+  const [visits, setVisits]           = useState<Visit[]>([]);
+  const [loadingPt, setLoadingPt]     = useState(true);
+  const [loadingVt, setLoadingVt]     = useState(true);
+
+  const ashaPhone = session?.user?.phone || "";
+  const ashaName  = session?.user?.name  || "";
+  const ashaVillages = session?.user?.villages || "";
+
+  const fetchPatients = useCallback(async () => {
+    try { const r = await fetch("/api/patients"); const d = await r.json(); setPatients(d.patients || []); }
+    catch { /* offline */ }
+    setLoadingPt(false);
+  }, []);
+
+  const fetchVisits = useCallback(async () => {
+    try { const r = await fetch(`/api/asha/visits?ashaPhone=${ashaPhone}`); const d = await r.json(); setVisits(d.visits || []); }
+    catch { /* offline */ }
+    setLoadingVt(false);
+  }, [ashaPhone]);
+
+  useEffect(() => {
+    if (status === "loading") return;
+    if (status === "unauthenticated" || session?.user?.role !== "ashaworker") {
+      router.replace("/asha/login");
+    }
+  }, [status, session, router]);
+
+  useEffect(() => { if (ashaPhone) { fetchPatients(); fetchVisits(); } }, [fetchPatients, fetchVisits, ashaPhone]);
+
+  const T = (hi: string, en: string) => lang === "hi" ? hi : en;
+
+  if (!mounted) return null;
+
+  const filtered = patients.filter(p =>
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (p.village || "").toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const redCount    = visits.filter(v => v.notes.toLowerCase().includes("red")).length;
+  const yellowCount = visits.filter(v => v.notes.toLowerCase().includes("yellow")).length;
+
+  return (
+    <div style={{ background: "#0d1520", minHeight: "100vh", display: "flex", justifyContent: "center" }}>
+      <div style={{ width: 390, background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ background: "#E8F8EF", padding: "8px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, animation: "pulse 2s infinite" }} />
+            {T("ऑनलाइन", "Online")}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={() => { const newLang = lang === "hi" ? "en" : "hi"; setLang(newLang); }} style={{ background: C.primary, border: "none", borderRadius: 12, padding: "4px 12px", fontSize: 11, fontWeight: 800, color: "white", cursor: "pointer" }}>
+              {lang === "hi" ? "EN" : "हिं"}
+            </button>
+            <button onClick={async () => { try { await signOut({ redirect: false }); } catch {} window.location.href = "/asha/login"; }} style={{ background: "rgba(0,0,0,0.05)", border: "none", borderRadius: 12, padding: "4px 10px", fontSize: 11, fontWeight: 700, color: C.muted, cursor: "pointer" }}>
+              {T("लॉग आउट", "Logout")}
+            </button>
+          </div>
+        </div>
+        <div style={{ background: `linear-gradient(135deg,${C.purple},#5B2C6F)`, padding: "16px 16px 20px", position: "relative" }}>
+          <div style={{ position: "absolute", right: -10, top: -10, fontSize: 80, opacity: .07 }}>👩</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: "white", margin: 0 }}>{T("मेरे गाँव के मरीज़", "My Village Patients")}</h2>
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,.65)", marginTop: 3 }}>{ashaName} · {ashaVillages}</p>
+            </div>
+            <button onClick={() => { window.location.href = "/asha/sos"; }} style={{ background: C.red, color: "white", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>🚨 SOS</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            {[
+              { n: patients.length, l: T("कुल", "Total"),    c: "rgba(255,255,255,.9)" },
+              { n: visits.length,   l: T("विज़िट", "Visits"), c: "#A9DFBF" },
+              { n: redCount,        l: "RED",                  c: "#F1948A" },
+              { n: yellowCount,     l: "YELLOW",               c: "#FAD7A0" },
+            ].map((s, i) => (
+              <div key={i} style={{ flex: 1, background: "rgba(255,255,255,.12)", borderRadius: 10, padding: "8px 6px", textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: s.c }}>{s.n}</div>
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,.6)", marginTop: 1 }}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", background: C.card, borderBottom: `1px solid ${C.border}` }}>
+          {[{ id: "patients", l: T("मरीज़", "Patients") }, { id: "visits", l: T("विज़िट", "Visits") }, { id: "stats", l: T("रिपोर्ट", "Report") }].map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id as typeof activeTab)}
+              style={{ flex: 1, padding: "12px 8px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: activeTab === tab.id ? C.purple : C.muted, borderBottom: activeTab === tab.id ? `3px solid ${C.purple}` : "3px solid transparent", transition: "all .2s" }}>
+              {tab.l}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "patients" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", border: `2px solid ${C.border}`, borderRadius: 12, background: C.card, marginBottom: 10, overflow: "hidden" }}>
+              <span style={{ padding: "10px 12px", fontSize: 16 }}>🔍</span>
+              <input style={{ flex: 1, border: "none", outline: "none", fontSize: 14, padding: "10px 0", background: "transparent" }}
+                placeholder={T("मरीज़ या गाँव खोजें...", "Search patient or village...")} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            </div>
+            {loadingPt ? (
+              <div style={{ textAlign: "center", padding: "30px 20px", color: C.muted }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>
+                <div style={{ fontSize: 13 }}>{T("मरीज़ लोड हो रहे हैं...", "Loading patients...")}</div>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "30px 20px", color: C.muted }}>
+                <div style={{ fontSize: 36 }}>👥</div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginTop: 10 }}>{T("कोई मरीज़ नहीं मिला", "No patients found")}</div>
+                <div style={{ fontSize: 12, marginTop: 4 }}>{T("नए मरीज़ Login से जुड़ेंगे", "New patients register via login")}</div>
+              </div>
+            ) : filtered.map((p) => {
+              const initial = p.name.trim()[0]?.toUpperCase() || "?";
+              const metaAge = p.age ? `${p.age}${p.gender === "male" ? "M" : p.gender === "female" ? "F" : ""}` : "";
+              return (
+                <div key={p._id} style={{ background: C.card, borderRadius: 16, padding: 14, display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10, border: `1px solid ${C.border}` }}>
+                  <div style={{ width: 42, height: 42, borderRadius: "50%", background: "#EBF4FD", border: `2px solid ${C.primary}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, color: C.primary, flexShrink: 0 }}>{initial}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{p.name}</div>
+                      <div style={{ fontSize: 11, color: C.muted }}>{metaAge}{p.village ? ` · ${p.village}` : ""}</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>📱 {p.phone}</div>
+                    {p.conditions && p.conditions.length > 0 && (
+                      <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+                        {p.conditions.slice(0, 3).map((c, j) => (
+                          <span key={j} style={{ padding: "3px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#EBF4FD", color: C.primary }}>{c}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                      <button onClick={() => {
+                        localStorage.setItem("ashaVisitPatient", JSON.stringify({ phone: p.phone, name: p.name }));
+                        router.push("/asha/log-visit");
+                      }} style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                        📝 {T("Log विज़िट", "Log Visit")}
+                      </button>
+                      <a href={`tel:${p.phone}`} style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, cursor: "pointer", textDecoration: "none", color: C.text, textAlign: "center" }}>
+                        📞 {T("कॉल", "Call")}
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <button onClick={() => router.push("/asha/log-visit")} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: `linear-gradient(135deg,${C.purple},#5B2C6F)`, color: "white", marginTop: 4 }}>
+              + {T("नई विज़िट दर्ज करें", "Log New Visit")}
+            </button>
+          </div>
+        )}
+
+        {activeTab === "visits" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
+            {loadingVt ? (
+              <div style={{ textAlign: "center", padding: "30px 20px", color: C.muted }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>
+                <div style={{ fontSize: 13 }}>{T("विज़िट लोड हो रहे हैं...", "Loading visits...")}</div>
+              </div>
+            ) : visits.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "30px 20px", color: C.muted }}>
+                <div style={{ fontSize: 36 }}>📋</div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginTop: 10 }}>{T("कोई विज़िट नहीं", "No visits yet")}</div>
+                <button onClick={() => router.push("/asha/log-visit")} style={{ marginTop: 12, padding: "10px 20px", borderRadius: 10, border: "none", background: C.purple, color: "white", fontWeight: 700, cursor: "pointer" }}>
+                  + {T("पहली विज़िट दर्ज करें", "Log First Visit")}
+                </button>
+              </div>
+            ) : visits.map((v) => (
+              <div key={v._id} style={{ background: C.card, borderRadius: 14, padding: 14, marginBottom: 10, border: `1px solid ${C.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{v.patientName}</div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: v.appLearned ? C.green : C.yellow, background: v.appLearned ? "#E8F8EF" : "#FEF9E7", padding: "3px 8px", borderRadius: 8 }}>
+                    {v.appLearned ? T("✓ App सीखा", "✓ App Learned") : T("⏳ Pending", "⏳ Pending")}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>📅 {v.visitDate || timeAgo(v.createdAt)}</div>
+                {v.notes && <div style={{ fontSize: 13, color: C.text, marginTop: 6, lineHeight: 1.5 }}>{v.notes}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "stats" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
+            <div style={{ background: `linear-gradient(135deg,${C.purple},#5B2C6F)`, borderRadius: 16, padding: 16, marginBottom: 12, color: "white" }}>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,.65)", fontWeight: 700, textTransform: "uppercase" }}>{T("कुल विज़िट", "Total Visits")}</div>
+              <div style={{ fontSize: 28, fontWeight: 800, marginTop: 4 }}>{visits.length} {T("विज़िट", "Visits")}</div>
+            </div>
+            {[
+              { icon: "🔴", label: T("RED Cases", "RED Cases"),                   val: redCount.toString(),                              color: C.red },
+              { icon: "🟡", label: T("YELLOW Cases", "YELLOW Cases"),             val: yellowCount.toString(),                           color: "#B7770D" },
+              { icon: "✅", label: T("App Onboarding", "App Onboarding"),         val: `${visits.filter(v => v.appLearned).length}/${visits.length}`, color: C.green },
+              { icon: "👥", label: T("कुल मरीज़ रजिस्टर्ड", "Total Patients"),  val: patients.length.toString(),                       color: C.primary },
+            ].map((s, i) => (
+              <div key={i} style={{ background: C.card, borderRadius: 12, padding: "12px 16px", marginBottom: 8, border: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <span style={{ fontSize: 20 }}>{s.icon}</span>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{s.label}</div>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: s.color }}>{s.val}</div>
+              </div>
+            ))}
+            <button onClick={() => router.push("/asha/sos")} style={{ width: "100%", marginTop: 8, padding: 14, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: `linear-gradient(135deg,#E74C3C,${C.red})`, color: "white" }}>
+              🚨 {T("SOS — आपातकाल भेजें", "SOS — Send Emergency Alert")}
+            </button>
+          </div>
+        )}
+        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+      </div>
+    </div>
+  );
+}

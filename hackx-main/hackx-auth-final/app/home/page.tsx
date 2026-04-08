@@ -1,0 +1,609 @@
+"use client";
+import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef } from "react";
+import { useAuth } from "@/lib/useAuth";
+import dynamic from "next/dynamic";
+const VideoCallModal = dynamic(() => import("@/components/VideoCallModal"), { ssr: false });
+
+const C = {
+  primary: "#1B6CA8",
+  primaryDark: "#0F4C7A",
+  green: "#1E8449",
+  greenLight: "#27AE60",
+  bg: "#F0F4F8",
+  card: "#FFFFFF",
+  text: "#1A2332",
+  muted: "#6B7C93",
+  border: "#DDE3EC",
+  red: "#C0392B",
+};
+
+export default function HomePage() {
+  const router = useRouter();
+  const { user, logout, loading } = useAuth();
+  const [lang, setLang] = useState("hi");
+  const [hasReport, setHasReport] = useState(false);
+  const [callOpen, setCallOpen] = useState(false);
+  const [incomingCallType, setIncomingCallType] = useState<"video" | "audio" | null>(null);
+  const [showCallBanner, setShowCallBanner] = useState(false);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const sseRef = useRef<EventSource | null>(null);
+  // FIX: stable clientId stored in sessionStorage so it survives SSE reconnects
+  // without changing — prevents the patient from receiving their own messages.
+  const patientClientIdRef = useRef<string>(
+    typeof window !== "undefined"
+      ? (sessionStorage.getItem("patientSignalClientId") ||
+        (() => {
+          const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+          sessionStorage.setItem("patientSignalClientId", id);
+          return id;
+        })())
+      : "patient-ssr"
+  );
+
+  useEffect(() => {
+    const storedLang = localStorage.getItem("lang") || "hi";
+    setLang(storedLang);
+
+    if (!loading && !user) {
+      router.push("/login");
+    } else {
+      setHasReport(!!localStorage.getItem("triageResult"));
+    }
+  }, [user, loading, router]);
+
+  // Listen for incoming calls from the doctor via SSE
+  useEffect(() => {
+    if (!user) return;
+    // FIXED: Must use phone (same field stored in Consultation.patientPhone)
+    // so doctor and patient join the same signal room.
+    const patientId =
+      (user as any).phone as string ||
+      (user as any)._id as string ||
+      "patient-001";
+    const roomId = `consultation-${patientId}`;
+    // FIX: pass stable clientId so we are never filtered as our own sender
+    const cid = patientClientIdRef.current;
+    const es = new EventSource(
+      `/api/signal?room=${encodeURIComponent(roomId)}&role=patient&clientId=${cid}`
+    );
+    sseRef.current = es;
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        // Ignore own echoes
+        if (msg.fromClientId === cid) return;
+        if (msg.type === "call-invite") {
+          const mode = (msg.data as { mode?: string })?.mode as "video" | "audio" ?? "video";
+          setIncomingCallType(mode);
+          setShowCallBanner(true);   // show banner notification
+          setCallOpen(true);          // open modal (handles incoming UI)
+          // Browser notification if page is in background
+          if (typeof window !== "undefined" && "Notification" in window) {
+            if (Notification.permission === "granted") {
+              new Notification("Incoming Call 📞", {
+                body: `Doctor is calling you — ${mode} call`,
+                icon: "/favicon.ico",
+              });
+            } else if (Notification.permission !== "denied") {
+              Notification.requestPermission().then((perm) => {
+                if (perm === "granted") {
+                  new Notification("Incoming Call 📞", {
+                    body: `Doctor is calling you — ${mode} call`,
+                    icon: "/favicon.ico",
+                  });
+                }
+              });
+            }
+          }
+        }
+      } catch { }
+    };
+    return () => { es.close(); sseRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  const t = (hi: string, en: string) => (lang === "hi" ? hi : en);
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          background: "#0d1520",
+          minHeight: "100vh",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <div style={{ fontSize: 20 }}>⏳ {t("लोड हो रहा है", "Loading...")}</div>
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
+  const greeting =
+    lang === "hi"
+      ? `नमस्ते ${user.name.split(" ")[0]} जी 🙏`
+      : `Hello ${user.name.split(" ")[0]} 🙏`;
+
+  const badges: string[] = [];
+  if (user.bloodGroup) badges.push(`🩸 ${user.bloodGroup}`);
+  if (user.conditions && user.conditions.length > 0) badges.push(`💊 ${user.conditions[0]}`);
+  if (user.age) badges.push(`${user.age} ${t("वर्ष", "years")}`);
+
+  const pastVisits = hasReport ? 1 : 0;
+
+  return (
+    <>
+      <div
+        style={{
+          background: "#0d1520",
+          minHeight: "100vh",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            width: 390,
+            background: C.bg,
+            minHeight: "100vh",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Online bar */}
+          {/* Online bar */}
+          <div
+            style={{
+              background: "#E8F8EF",
+              padding: "6px 16px",
+              fontSize: 12,
+              fontWeight: 700,
+              color: C.green,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: C.green,
+                  animation: "pulse 2s infinite",
+                }}
+              />
+              {t("ऑनलाइन — AI सक्रिय है", "Online — AI Active")}
+            </div>
+            <button
+              onClick={() => {
+                const newLang = lang === "hi" ? "en" : "hi";
+                setLang(newLang);
+                localStorage.setItem("lang", newLang);
+              }}
+              style={{
+                background: C.primary,
+                border: "none",
+                borderRadius: 20,
+                padding: "4px 12px",
+                fontSize: 11,
+                fontWeight: 800,
+                color: "white",
+                cursor: "pointer",
+              }}
+            >
+              {lang === "hi" ? "EN" : "हिं"}
+            </button>
+          </div>
+
+          {/* Hero */}
+          <div
+            style={{
+              background: `linear-gradient(135deg,${C.primary},${C.primaryDark})`,
+              padding: "16px 16px 22px",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                right: -10,
+                top: -10,
+                fontSize: 80,
+                opacity: 0.07,
+                pointerEvents: "none",
+              }}
+            >
+              🏥
+            </div>
+
+            <button
+              onClick={logout}
+              style={{
+                position: "absolute",
+                top: 14,
+                right: 14,
+                background: "rgba(255,255,255,.15)",
+                border: "none",
+                borderRadius: 8,
+                color: "rgba(255,255,255,.9)",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "6px 12px",
+                cursor: "pointer",
+                zIndex: 10,
+              }}
+            >
+              {t("लॉग आउट", "Logout")}
+            </button>
+
+            {/* Clickable Profile Area */}
+            <div
+              onClick={() => router.push("/profile")}
+              style={{ cursor: "pointer", position: "relative", zIndex: 1, paddingRight: 80 }}
+            >
+              <div style={{ fontSize: 24, fontWeight: 800, color: "white" }}>{greeting}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,.8)", marginTop: 4 }}>
+                {user.name} · {user.village}
+              </div>
+              {badges.length > 0 && (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "rgba(255,255,255,.2)",
+                    padding: "6px 14px",
+                    borderRadius: 20,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "white",
+                    marginTop: 12,
+                  }}
+                >
+                  {badges.join(" · ")}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Scrollable body */}
+          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+            {/* Action buttons */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                {
+                  icon: "🩺",
+                  title: t("लक्षण जाँचें", "Check My Symptoms"),
+                  sub: t("AI से जाँचें — बिना इंटरनेट", "AI powered — works offline"),
+                  bg: `linear-gradient(135deg,${C.primary},${C.primaryDark})`,
+                  shadow: "rgba(27,108,168,.45)",
+                  path: "/symptoms",
+                },
+                {
+                  icon: "📋",
+                  title: t("मेरे स्वास्थ्य रिकॉर्ड", "My Health Records"),
+                  sub: t("पिछली विज़िट और नुस्खे देखें", "View past visits & prescriptions"),
+                  bg: "linear-gradient(135deg,#6C3483,#4A235A)",
+                  shadow: "rgba(108,52,131,.35)",
+                  path: "/records",
+                },
+                {
+                  icon: "💊",
+                  title: t("दवाई खोजें", "Find Medicine Nearby"),
+                  sub: t("पास की दुकान में दवाई उपलब्धता", "Check stock at nearby pharmacies"),
+                  bg: `linear-gradient(135deg,${C.greenLight},${C.green})`,
+                  shadow: "rgba(30,132,73,.35)",
+                  path: "/medicine",
+                },
+              ].map((action, i) => (
+                <button
+                  key={i}
+                  onClick={() => router.push(action.path)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: 18,
+                    borderRadius: 18,
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    gap: 14,
+                    background: action.bg,
+                    boxShadow: `0 6px 24px ${action.shadow}`,
+                    transition: "all .2s",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 54,
+                      height: 54,
+                      borderRadius: 14,
+                      background: "rgba(255,255,255,.18)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 26,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {action.icon}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h3
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 800,
+                        color: "white",
+                        lineHeight: 1.2,
+                        margin: 0,
+                      }}
+                    >
+                      {action.title}
+                    </h3>
+                    <p
+                      style={{
+                        fontSize: 11,
+                        color: "rgba(255,255,255,.7)",
+                        marginTop: 2,
+                        marginBottom: 0,
+                      }}
+                    >
+                      {action.sub}
+                    </p>
+                  </div>
+                  <span style={{ fontSize: 20, color: "rgba(255,255,255,.5)" }}>›</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Aarogya Voice Assistant */}
+            <button
+              onClick={() => setShowVoiceModal(true)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                padding: 18,
+                borderRadius: 18,
+                border: "none",
+                cursor: "pointer",
+                textAlign: "left",
+                gap: 14,
+                width: "100%",
+                background: "linear-gradient(135deg,#E67E22,#CA6F1E)",
+                boxShadow: "0 6px 24px rgba(230,126,34,.4)",
+                marginTop: 12,
+              }}
+            >
+              <div style={{
+                width: 54, height: 54, borderRadius: 14,
+                background: "rgba(255,255,255,.18)",
+                display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: 26, flexShrink: 0,
+              }}>
+                🎙️
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 800, color: "white", lineHeight: 1.2, margin: 0 }}>
+                  {t("आरोग्य वॉइस असिस्टेंट", "Aarogya Voice Assistant")}
+                </h3>
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,.7)", marginTop: 2, marginBottom: 0 }}>
+                  {t("AI से बात करें — फ़ोन पर", "Talk to AI health assistant by phone")}
+                </p>
+              </div>
+              <span style={{ fontSize: 20, color: "rgba(255,255,255,.5)" }}>›</span>
+            </button>
+
+            {/* Stats */}
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              {[
+                { n: String(pastVisits), l: t("पिछली विज़िट", "Past Visits") },
+                { n: "2", l: t("डॉक्टर उपलब्ध", "Doctors") },
+                { n: "3", l: t("पास की दुकान", "Pharmacies") },
+              ].map((s, i) => (
+                <div
+                  key={i}
+                  style={{
+                    flex: 1,
+                    background: C.card,
+                    borderRadius: 12,
+                    padding: 12,
+                    textAlign: "center",
+                    border: `1px solid ${C.border}`,
+                  }}
+                >
+                  <div style={{ fontSize: 22, fontWeight: 800, color: C.primary }}>{s.n}</div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2, lineHeight: 1.3 }}>
+                    {s.l}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Report / No checkup alert */}
+            {hasReport ? (
+              <div
+                style={{
+                  background: "#EBF4FD",
+                  borderRadius: 12,
+                  padding: 12,
+                  border: "1px solid #AED6F1",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  marginTop: 14,
+                  cursor: "pointer",
+                }}
+                onClick={() => router.push("/report")}
+              >
+                <span style={{ fontSize: 20 }}>📋</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.primary }}>
+                    {t("रिपोर्ट तैयार है", "Report Ready")}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                    {t("अपनी स्वास्थ्य रिपोर्ट देखें →", "View your health report →")}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  background: "#FDEDED",
+                  borderRadius: 12,
+                  padding: 12,
+                  border: "1px solid #F1948A",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  marginTop: 14,
+                }}
+              >
+                <span style={{ fontSize: 20 }}>🔴</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.red }}>
+                    {t("कोई जाँच नहीं हुई", "No Checkup Done")}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                    {t(
+                      "लक्षण जाँच करके रिपोर्ट बनाएं",
+                      "Run a symptom check to generate your report"
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+
+          <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+        </div>
+      </div>
+
+      {/* Incoming call notification banner (visible even if modal somehow not open) */}
+      {showCallBanner && !callOpen && (
+        <div style={{
+          position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)",
+          zIndex: 2000, background: "#1A2332", borderRadius: 20, padding: "14px 24px",
+          display: "flex", alignItems: "center", gap: 14, boxShadow: "0 8px 32px rgba(0,0,0,.4)",
+          animation: "slideUp .3s ease-out",
+        }}>
+          <span style={{ fontSize: 28, animation: "ring 1s infinite", display: "inline-block" }}>📲</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "white" }}>Incoming {incomingCallType} call</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>Doctor is calling</div>
+          </div>
+          <button onClick={() => { setCallOpen(true); setShowCallBanner(false); }}
+            style={{ padding: "8px 16px", borderRadius: 30, border: "none", background: "#1E8449", color: "white", fontWeight: 700, cursor: "pointer" }}>
+            Answer
+          </button>
+          <button onClick={() => setShowCallBanner(false)}
+            style={{ padding: "8px 14px", borderRadius: 30, border: "none", background: "#C0392B", color: "white", fontWeight: 700, cursor: "pointer" }}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {callOpen && (
+        <VideoCallModal
+          isOpen={true}
+          onClose={() => { setCallOpen(false); setShowCallBanner(false); }}
+          patientName={user.name}
+          patientId={user.phone || user._id || "patient-001"}
+          isDoctor={false}
+          initialIncomingCallType={incomingCallType}
+        />
+      )}
+      {/* Aarogya Voice Assistant Modal */}
+      {showVoiceModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 2000,
+          }}
+          onClick={() => setShowVoiceModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "white", borderRadius: "22px 22px 0 0",
+              padding: 24, width: "100%", maxWidth: 420,
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 46, height: 46, borderRadius: 14,
+                  background: "linear-gradient(135deg,#E67E22,#CA6F1E)",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22,
+                }}>🎙️</div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#1A2332" }}>
+                    {t("आरोग्य वॉइस असिस्टेंट", "Aarogya Voice Assistant")}
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 11, color: "#6B7C93" }}>
+                    {t("AI हेल्थ असिस्टेंट से फ़ोन पर बात करें", "Speak to AI health assistant by phone")}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowVoiceModal(false)}
+                style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#6B7C93" }}>
+                ✕
+              </button>
+            </div>
+
+            <div style={{ height: 1, background: "#DDE3EC", margin: "14px 0" }} />
+
+            <p style={{ fontSize: 13, color: "#6B7C93", marginBottom: 16, marginTop: 0 }}>
+              {t("नीचे दिए नंबर पर कॉल करें — AI आपकी भाषा में बात करेगा",
+                "Call the number below — AI will speak in your language")}
+            </p>
+
+            {/* Number 1 */}
+            {[
+              { label: t("वॉइस एजेंट 1", "Voice Agent 1"), number: "+14786063734" },
+              { label: t("वॉइस एजेंट 2", "Voice Agent 2"), number: "+14784437687" },
+              { label: t("वॉइस एजेंट 3", "Voice Agent 3"), number: "+12602766832" },
+            ].map((agent, i) => (
+              <div key={i} style={{
+                background: "#F8FAFC", borderRadius: 14, padding: "14px 16px",
+                marginBottom: 10, border: "1px solid #DDE3EC",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1A2332" }}>{agent.label}</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: "#E67E22", marginTop: 3, letterSpacing: 0.5 }}>
+                    {agent.number}
+                  </div>
+                </div>
+                <a
+                  href={`tel:${agent.number}`}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "10px 18px", borderRadius: 12, border: "none",
+                    background: "linear-gradient(135deg,#E67E22,#CA6F1E)",
+                    color: "white", fontWeight: 800, fontSize: 14,
+                    textDecoration: "none", boxShadow: "0 4px 14px rgba(230,126,34,.4)",
+                  }}
+                >
+                  📞 {t("कॉल", "Call")}
+                </a>
+              </div>
+            ))}
+
+            <p style={{ fontSize: 11, color: "#6B7C93", textAlign: "center", marginTop: 8, marginBottom: 0 }}>
+              {t("कॉल करने पर आपका फ़ोन ऐप खुलेगा", "Tapping Call will open your phone dialer")}
+            </p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
