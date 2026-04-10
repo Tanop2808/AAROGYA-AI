@@ -19,6 +19,7 @@ L.Icon.Default.mergeOptions({
 interface Pharmacy {
   id: string;
   name: string;
+  storeName?: string;
   village: string;
   lat: number;
   lng: number;
@@ -26,6 +27,9 @@ interface Pharmacy {
   type: string;
   inStock: boolean;
   phone: string;
+  address?: string;
+  opening_hours?: string;
+  website?: string;
 }
 
 interface OpenStreetMapProps {
