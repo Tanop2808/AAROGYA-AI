@@ -395,9 +395,9 @@ function generatePDF(patient: PatientInfo, consultations: Consultation[]): void 
     if (idx < consultations.length - 1) {
       doc.setDrawColor(220, 225, 230);
       doc.setLineWidth(0.4);
-      doc.setLineDashPattern([2, 2]);
+      doc.setLineDashPattern([2, 2], 0);
       doc.line(margin + 10, y, pageWidth - margin - 10, y);
-      doc.setLineDashPattern([]);
+      doc.setLineDashPattern([], 0);
       y += 8;
     }
   });
