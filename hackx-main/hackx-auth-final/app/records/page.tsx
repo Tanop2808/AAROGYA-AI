@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { jsPDF } from "jspdf";
 
 const C = {
   primary: "#1B6CA8", primaryDark: "#0F4C7A", green: "#1E8449",
@@ -17,7 +18,12 @@ interface Consultation {
   triageResult: any;
   status: "pending" | "in-review" | "completed";
   doctorNotes?: string;
-  prescription?: string;   // plain string from DB
+  prescription?: string;
+  doctorName?: string;
+  hospital?: string;
+  slot?: string;
+  queueNo?: string;
+  uploadedRecords?: any[];
   createdAt: string;
 }
 
@@ -30,7 +36,6 @@ interface PatientInfo {
   condition: string;
 }
 
-// ─── Urgency config ───────────────────────────────────────────────────────────
 const urgencyConfig: Record<string, { label: string; color: string; bg: string }> = {
   RED:    { label: "Emergency",       color: "#C0392B", bg: "#FDEDEC" },
   YELLOW: { label: "Needs Attention", color: "#D68910", bg: "#FEF9E7" },
@@ -46,7 +51,6 @@ function formatDate(iso: string): string {
   );
 }
 
-// ─── Derive a human-readable title from triage result or symptoms ─────────────
 function getTitle(c: Consultation): string {
   if (c.triageResult?.conditionEn) return c.triageResult.conditionEn;
   if (c.symptoms?.length) {
@@ -57,100 +61,392 @@ function getTitle(c: Consultation): string {
   return "Consultation";
 }
 
-// ─── HTML generation for download ─────────────────────────────────────────────
-function generateHTML(patient: PatientInfo, consultations: Consultation[]): string {
-  const rows = consultations
-    .map((c) => {
-      const cfg = urgencyConfig[c.urgency] || urgencyConfig.GREEN;
-      const title = getTitle(c);
-      return `
-      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:20px;border-left:4px solid ${cfg.color}">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-          <span style="width:10px;height:10px;border-radius:50%;background:${cfg.color};display:inline-block;flex-shrink:0"></span>
-          <h3 style="margin:0;font-size:16px;color:#111;flex:1">${title}</h3>
-          <span style="background:${cfg.bg};color:${cfg.color};padding:3px 12px;border-radius:20px;font-size:12px;font-weight:700">${cfg.label}</span>
-        </div>
-        <p style="margin:0 0 10px;color:#6b7280;font-size:13px">${formatDate(c.createdAt)}</p>
-        <div style="margin-bottom:10px">
-          ${(c.symptoms || []).map((s) => `<span style="background:#f3f4f6;padding:2px 10px;border-radius:20px;font-size:12px;margin-right:6px;display:inline-block;margin-bottom:4px">${s}</span>`).join("")}
-        </div>
-        ${c.doctorNotes ? `
-          <div style="background:#f8fafc;border-radius:8px;padding:12px;margin-bottom:12px;border:1px solid #e5e7eb">
-            <strong style="font-size:12px;color:#374151;text-transform:uppercase;letter-spacing:0.5px">🩺 Doctor Notes</strong>
-            <p style="margin:6px 0 0;font-size:13px;color:#4b5563;line-height:1.6">${c.doctorNotes}</p>
-          </div>` : ""}
-        ${c.prescription ? `
-          <div style="background:#f0fdf4;border-radius:8px;padding:12px;border:1px solid #bbf7d0">
-            <strong style="font-size:12px;color:#166534;text-transform:uppercase;letter-spacing:0.5px">💊 Prescription</strong>
-            <p style="margin:6px 0 0;font-size:13px;color:#166534;line-height:1.6;white-space:pre-line">${c.prescription}</p>
-          </div>` : ""}
-        <p style="margin:10px 0 0;font-size:12px;color:#6b7280;font-style:italic">Status: ${c.status}</p>
-      </div>`;
-    })
-    .join("");
+function generatePDF(patient: PatientInfo, consultations: Consultation[]): void {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 20;
+  const contentWidth = pageWidth - 2 * margin;
+  let y = 0;
+  let pageNum = 1;
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Health Records - ${patient.name}</title>
-  <style>
-    body { font-family: 'Segoe UI', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #111; background: #f9fafb; }
-    @media print { body { background: #fff; } }
-  </style>
-</head>
-<body>
-  <div style="text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:2px solid #e5e7eb">
-    <h1 style="margin:0;font-size:24px;color:#1B6CA8">🏥 My Health Records</h1>
-    <p style="color:#6b7280;margin:4px 0 0;font-size:13px">Official Medical Record — HackX Health System</p>
-  </div>
-  <div style="background:#EBF4FD;border-radius:12px;padding:20px;margin-bottom:30px;border:1px solid #BFDBFE">
-    <div style="display:flex;align-items:center;gap:14px">
-      <div style="width:52px;height:52px;border-radius:50%;background:#1B6CA8;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:white;flex-shrink:0">
-        ${patient.name.charAt(0).toUpperCase()}
-      </div>
-      <div>
-        <div style="font-size:20px;font-weight:800">${patient.name}</div>
-        <div style="color:#6b7280;font-size:13px;margin-top:2px">${patient.gender} · ${patient.age} yrs · 📱 ${patient.phone}</div>
-      </div>
-    </div>
-    <div style="display:flex;gap:16px;margin-top:14px">
-      <div style="text-align:center;background:rgba(255,255,255,0.7);padding:10px 16px;border-radius:10px;flex:1">
-        <div style="font-size:18px;font-weight:800">${patient.bloodGroup}</div>
-        <div style="font-size:11px;color:#6b7280;margin-top:2px">Blood Group</div>
-      </div>
-      <div style="text-align:center;background:rgba(255,255,255,0.7);padding:10px 16px;border-radius:10px;flex:1">
-        <div style="font-size:18px;font-weight:800">${patient.age}</div>
-        <div style="font-size:11px;color:#6b7280;margin-top:2px">Age</div>
-      </div>
-      <div style="text-align:center;background:rgba(255,255,255,0.7);padding:10px 16px;border-radius:10px;flex:1">
-        <div style="font-size:18px;font-weight:800">${patient.condition || "—"}</div>
-        <div style="font-size:11px;color:#6b7280;margin-top:2px">Condition</div>
-      </div>
-    </div>
-  </div>
-  <h2 style="font-size:15px;margin-bottom:16px;color:#111">📋 Past Consultations (${consultations.length})</h2>
-  ${rows}
-  <p style="text-align:center;color:#9ca3af;font-size:12px;margin-top:30px;padding-top:20px;border-top:1px solid #e5e7eb">
-    Generated on ${new Date().toLocaleString("en-IN")} · HackX Health System
-  </p>
-</body>
-</html>`;
+  const addHeader = () => {
+    y = 0;
+    // Top contact bar
+    doc.setFillColor(245, 248, 250);
+    doc.rect(0, 0, pageWidth, 18, "F");
+    
+    doc.setFontSize(8);
+    doc.setTextColor(100, 100, 100);
+    doc.text("Aarogya AI Healthcare | contact@aarogyaai.org | www.aarogyaai.org | +91-1800-XXX-XXXX", pageWidth / 2, 11, { align: "center" });
+
+    // Main header with logo
+    doc.setFillColor(27, 108, 168);
+    doc.rect(0, 18, pageWidth, 22, "F");
+
+    // Logo circle
+    doc.setFillColor(255, 255, 255);
+    doc.circle(margin + 8, 29, 7, "F");
+    doc.setFontSize(11);
+    doc.setTextColor(27, 108, 168);
+    doc.text("AA", margin + 8, 32, { align: "center" });
+
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text("AAROGYA AI", margin + 20, 28);
+    
+    doc.setFontSize(9);
+    doc.setTextColor(200, 220, 240);
+    doc.text("AI-Powered Rural Healthcare Initiative", margin + 20, 35);
+
+    // Report title on right
+    doc.setFontSize(13);
+    doc.setTextColor(255, 255, 255);
+    doc.text("CLINICAL HANDOFF REPORT", pageWidth - margin, 28, { align: "right" });
+    
+    doc.setFontSize(8);
+    doc.setTextColor(200, 220, 240);
+    doc.text(`Generated: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, pageWidth - margin, 35, { align: "right" });
+
+    // Page number
+    doc.setFontSize(8);
+    doc.setTextColor(200, 200, 200);
+    doc.text(`Page ${pageNum}`, pageWidth - margin, 14, { align: "right" });
+
+    y = 48;
+  };
+
+  const addFooter = () => {
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, pageHeight - 20, pageWidth - margin, pageHeight - 20);
+    
+    doc.setFontSize(7);
+    doc.setTextColor(130, 130, 130);
+    doc.text("Aarogya AI Clinical Handoff Report | Confidential Medical Document | Authorized Personnel Only", pageWidth / 2, pageHeight - 15, { align: "center" });
+    doc.text(`Page ${pageNum} | Generated on ${new Date().toLocaleDateString("en-IN")}`, pageWidth / 2, pageHeight - 11, { align: "center" });
+  };
+
+  const checkPageBreak = (needed: number) => {
+    if (y + needed > pageHeight - 30) {
+      addFooter();
+      doc.addPage();
+      pageNum++;
+      addHeader();
+    }
+  };
+
+  const drawSectionHeader = (title: string, sectionNum: string) => {
+    doc.setFontSize(11);
+    doc.setTextColor(27, 108, 168);
+    doc.setFillColor(235, 244, 253);
+    doc.roundedRect(margin, y, contentWidth, 8, 1, 1, "F");
+    doc.text(`${sectionNum} ${title}`, margin + 4, y + 6);
+    y += 12;
+  };
+
+  const drawSubsectionHeader = (title: string, num: string) => {
+    doc.setFontSize(10);
+    doc.setTextColor(50, 50, 50);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${num} ${title}`, margin + 2, y);
+    y += 7;
+    doc.setFont("helvetica", "normal");
+  };
+
+  const drawField = (label: string, value: string, indent: number = 0) => {
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`${label}:`, margin + indent, y);
+    
+    doc.setFontSize(9);
+    doc.setTextColor(30, 30, 30);
+    doc.setFont("helvetica", "bold");
+    doc.text(value || "N/A", margin + indent + 45, y);
+    doc.setFont("helvetica", "normal");
+    y += 6;
+  };
+
+  // ==================== COVER PAGE ====================
+  // Centered title
+  doc.setFillColor(27, 108, 168);
+  doc.rect(0, 0, pageWidth, pageHeight, "F");
+  
+  doc.setFillColor(255, 255, 255);
+  doc.circle(pageWidth / 2, pageHeight / 2 - 40, 25, "F");
+  doc.setFontSize(24);
+  doc.setTextColor(27, 108, 168);
+  doc.text("AA", pageWidth / 2, pageHeight / 2 - 35, { align: "center" });
+  
+  doc.setFontSize(28);
+  doc.setTextColor(255, 255, 255);
+  doc.text("AAROGYA AI", pageWidth / 2, pageHeight / 2 + 5, { align: "center" });
+  
+  doc.setFontSize(14);
+  doc.setTextColor(200, 220, 240);
+  doc.text("Clinical Handoff Report", pageWidth / 2, pageHeight / 2 + 18, { align: "center" });
+  
+  doc.setFontSize(11);
+  doc.setTextColor(180, 200, 220);
+  doc.text("Confidential Medical Document", pageWidth / 2, pageHeight / 2 + 28, { align: "center" });
+  
+  doc.setFontSize(10);
+  doc.setTextColor(150, 170, 190);
+  doc.text(`Patient: ${patient.name}`, pageWidth / 2, pageHeight / 2 + 45, { align: "center" });
+  doc.text(`Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}`, pageWidth / 2, pageHeight / 2 + 53, { align: "center" });
+  doc.text(`Report ID: AAR-${Date.now()}`, pageWidth / 2, pageHeight / 2 + 61, { align: "center" });
+
+  doc.addPage();
+  pageNum++;
+
+  // ==================== MAIN CONTENT ====================
+  addHeader();
+
+  // SECTION I: PATIENT INFORMATION
+  drawSectionHeader("Patient Information", "I.");
+
+  // 1. Demographics
+  drawSubsectionHeader("Demographics", "1.");
+  
+  doc.setFillColor(250, 252, 255);
+  doc.roundedRect(margin, y, contentWidth, 42, 2, 2, "F");
+  y += 5;
+  
+  drawField("Patient Name", patient.name, margin + 5);
+  drawField("Age", `${patient.age} years`, margin + 5);
+  drawField("Gender", patient.gender, margin + 5);
+  drawField("Phone", patient.phone, margin + 5);
+  drawField("Blood Group", patient.bloodGroup, margin + 5);
+  y += 5;
+
+  // 2. Medical History
+  drawSubsectionHeader("Medical History", "2.");
+  
+  doc.setFillColor(250, 252, 255);
+  doc.roundedRect(margin, y, contentWidth, 15, 2, 2, "F");
+  y += 5;
+  
+  drawField("Medical Condition", patient.condition, margin + 5);
+  y += 5;
+
+  // Total consultations note
+  doc.setFontSize(9);
+  doc.setTextColor(80, 80, 80);
+  doc.text(`Total Consultations on Record: ${consultations.length}`, margin + 5, y);
+  y += 10;
+
+  // SECTION II: CURRENT STATUS & CONSULTATION HISTORY
+  checkPageBreak(60);
+  drawSectionHeader("Current Status & Consultation History", "II.");
+
+  consultations.forEach((c, idx) => {
+    const cfg = urgencyConfig[c.urgency] || urgencyConfig.GREEN;
+
+    checkPageBreak(80);
+
+    // Consultation header box
+    doc.setFillColor(cfg.bg);
+    doc.roundedRect(margin, y, contentWidth, 16, 2, 2, "F");
+    
+    doc.setFontSize(11);
+    doc.setTextColor(27, 108, 168);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Consultation #${idx + 1}`, margin + 5, y + 7);
+    
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    doc.setFont("helvetica", "normal");
+    doc.text(formatDate(c.createdAt), pageWidth - margin - 40, y + 7);
+    
+    // Urgency badge
+    doc.setFillColor(cfg.color);
+    doc.roundedRect(pageWidth - margin - 35, y + 3, 30, 10, 1, 1, "F");
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.text(cfg.label, pageWidth - margin - 20, y + 9, { align: "center" });
+    doc.setFont("helvetica", "normal");
+    
+    y += 20;
+
+    // 1. Chief Complaints / Symptoms
+    if (c.symptoms && c.symptoms.length > 0) {
+      drawSubsectionHeader("Chief Complaints / Symptoms", `${idx + 1}.1`);
+      
+      doc.setFillColor(255, 250, 240);
+      doc.roundedRect(margin, y, contentWidth, 14, 2, 2, "F");
+      y += 5;
+      
+      doc.setFontSize(9);
+      doc.setTextColor(50, 50, 50);
+      const symptomsText = c.symptoms.join(", ");
+      const symptomLines = doc.splitTextToSize(`• ${symptomsText}`, contentWidth - 10);
+      doc.text(symptomLines, margin + 5, y);
+      y += symptomLines.length * 5 + 6;
+    }
+
+    // 2. Appointment Details
+    if (c.doctorName || c.hospital || c.slot) {
+      checkPageBreak(30);
+      drawSubsectionHeader("Appointment Details", `${idx + 1}.2`);
+      
+      doc.setFillColor(250, 252, 255);
+      doc.roundedRect(margin, y, contentWidth, c.queueNo ? 22 : 17, 2, 2, "F");
+      y += 5;
+      
+      if (c.doctorName) drawField("Doctor", `Dr. ${c.doctorName}`, margin + 5);
+      if (c.hospital) drawField("Hospital", c.hospital, margin + 5);
+      if (c.slot) drawField("Time", `${c.slot}${c.queueNo ? ` | Queue No: #${c.queueNo}` : ""}`, margin + 5);
+      y += 5;
+    }
+
+    // 3. AI Triage Analysis
+    if (c.triageResult) {
+      checkPageBreak(30);
+      drawSubsectionHeader("AI Triage Analysis", `${idx + 1}.3`);
+      
+      doc.setFillColor(250, 250, 255);
+      doc.roundedRect(margin, y, contentWidth, 15, 2, 2, "F");
+      y += 5;
+      
+      if (c.triageResult.conditionEn) drawField("Condition", c.triageResult.conditionEn, margin + 5);
+      if (c.triageResult.urgency) drawField("Urgency Level", c.triageResult.urgency, margin + 5);
+      y += 5;
+    }
+
+    // 4. Attached Medical Records
+    if (c.uploadedRecords && c.uploadedRecords.length > 0) {
+      checkPageBreak(40);
+      drawSubsectionHeader("Attached Medical Records", `${idx + 1}.4`);
+      
+      doc.setFontSize(9);
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Number of Records: ${c.uploadedRecords.length}`, margin + 5, y);
+      y += 6;
+      
+      const imgSize = 22;
+      const imgGap = 5;
+      let imgX = margin + 5;
+      let imgRow = 0;
+
+      for (let i = 0; i < Math.min(c.uploadedRecords.length, 8); i++) {
+        const rec = c.uploadedRecords[i];
+        if (rec && rec.dataUrl) {
+          try {
+            doc.setDrawColor(200, 200, 200);
+            doc.setLineWidth(0.2);
+            doc.rect(imgX, y + imgRow * (imgSize + imgGap), imgSize, imgSize);
+            doc.addImage(rec.dataUrl, "JPEG", imgX + 1, y + 1 + imgRow * (imgSize + imgGap), imgSize - 2, imgSize - 2);
+
+            if ((i + 1) % 5 === 0) {
+              imgX = margin + 5;
+              imgRow++;
+            } else {
+              imgX += imgSize + imgGap;
+            }
+          } catch (e) {}
+        }
+      }
+
+      const totalRows = Math.ceil(Math.min(c.uploadedRecords.length, 8) / 5);
+      y += totalRows * (imgSize + imgGap) + 8;
+    }
+
+    // 5. Doctor's Diagnosis
+    if (c.doctorNotes) {
+      checkPageBreak(35);
+      drawSubsectionHeader("Doctor's Diagnosis & Notes", `${idx + 1}.${c.uploadedRecords?.length ? "5" : "4"}`);
+      
+      doc.setFillColor(253, 245, 245);
+      doc.roundedRect(margin, y, contentWidth, 22, 2, 2, "F");
+      y += 5;
+      
+      doc.setFontSize(9);
+      doc.setTextColor(60, 60, 60);
+      const notesLines = doc.splitTextToSize(c.doctorNotes, contentWidth - 10);
+      doc.text(notesLines, margin + 5, y);
+      y += notesLines.length * 5 + 8;
+    }
+
+    // 6. Prescription / Treatment
+    if (c.prescription) {
+      checkPageBreak(35);
+      drawSubsectionHeader("Prescription / Treatment", `${idx + 1}.${c.doctorNotes ? "6" : c.uploadedRecords?.length ? "5" : "4"}`);
+      
+      doc.setFillColor(245, 255, 245);
+      doc.roundedRect(margin, y, contentWidth, 22, 2, 2, "F");
+      y += 5;
+      
+      doc.setFontSize(9);
+      doc.setTextColor(50, 80, 50);
+      const rxLines = doc.splitTextToSize(c.prescription, contentWidth - 10);
+      doc.text(rxLines, margin + 5, y);
+      y += rxLines.length * 5 + 8;
+    }
+
+    // Status
+    doc.setFontSize(9);
+    doc.setTextColor(100, 100, 100);
+    const statusText = c.status === "completed" ? "✓ Completed" : c.status === "in-review" ? "◐ Under Review" : "○ Pending";
+    doc.text(`Status: ${statusText}`, margin + 5, y);
+    y += 10;
+
+    // Divider between consultations
+    if (idx < consultations.length - 1) {
+      doc.setDrawColor(220, 225, 230);
+      doc.setLineWidth(0.4);
+      doc.setLineDashPattern([2, 2]);
+      doc.line(margin + 10, y, pageWidth - margin - 10, y);
+      doc.setLineDashPattern([]);
+      y += 8;
+    }
+  });
+
+  // ==================== SIGNATURE SECTION ====================
+  checkPageBreak(50);
+  y = pageHeight - 65;
+
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.5);
+  
+  // First signature line
+  doc.line(margin + 10, y + 12, margin + 80, y + 12);
+  doc.setFontSize(9);
+  doc.setTextColor(80, 80, 80);
+  doc.text("Attending Physician Signature", margin + 45, y + 18, { align: "center" });
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text("Date & Stamp", margin + 45, y + 23, { align: "center" });
+
+  // Second signature line
+  doc.line(pageWidth - margin - 80, y + 12, pageWidth - margin - 10, y + 12);
+  doc.setFontSize(9);
+  doc.setTextColor(80, 80, 80);
+  doc.text("Authorized by Aarogya AI Healthcare", pageWidth - margin - 45, y + 18, { align: "center" });
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text("Official Seal", pageWidth - margin - 45, y + 23, { align: "center" });
+
+  // Disclaimer
+  y += 32;
+  doc.setFillColor(250, 250, 250);
+  doc.roundedRect(margin, y, contentWidth, 16, 2, 2, "F");
+  
+  doc.setFontSize(7);
+  doc.setTextColor(100, 100, 100);
+  const disclaimerText = "This Clinical Handoff Report is a confidential medical document prepared by Aarogya AI Healthcare System. " +
+    "It contains protected health information (PHI) and is intended solely for authorized healthcare professionals. " +
+    "If you have received this document in error, please notify the issuing facility immediately.";
+  const disclaimerLines = doc.splitTextToSize(disclaimerText, contentWidth - 10);
+  doc.text(disclaimerLines, margin + 5, y + 6);
+
+  addFooter();
+
+  // Save with professional filename
+  const dateStr = new Date().toISOString().split("T")[0];
+  doc.save(`ClinicalHandoff_${patient.name.replace(/\s+/g, "_")}_${dateStr}.pdf`);
 }
 
-function triggerDownload(html: string, filename: string): void {
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
 export default function RecordsPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
@@ -213,16 +509,9 @@ export default function RecordsPage() {
   const handleDownloadAll = () => {
     setDownloading(true);
     setTimeout(() => {
-      const html = generateHTML(patient, consultations);
-      triggerDownload(html, `health-records-${patient.name.toLowerCase().replace(/\s+/g, "-")}.html`);
+      generatePDF(patient, consultations);
       setDownloading(false);
     }, 300);
-  };
-
-  const handleDownloadOne = (c: Consultation) => {
-    const title = getTitle(c).replace(/\s+/g, "-").toLowerCase().replace(/[^a-z0-9-]/g, "");
-    const html = generateHTML(patient, [c]);
-    triggerDownload(html, `record-${title}.html`);
   };
 
   const statusLabel: Record<string, string> = {
@@ -239,7 +528,7 @@ export default function RecordsPage() {
         .rec-card { transition: box-shadow 0.18s, transform 0.18s; }
         .rec-card:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(0,0,0,0.09) !important; }
         .rec-pill { display:inline-flex; align-items:center; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; background:#EBF4FD; color:${C.primary}; margin-right:5px; margin-bottom:3px; }
-        .rec-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; border:none; transition:opacity 0.15s, transform 0.1s; }
+        .rec-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:10px; font-size:13px; fontWeight:700; cursor:pointer; border:none; transition:opacity 0.15s, transform 0.1s; }
         .rec-btn:hover { opacity:0.85; transform:scale(0.98); }
         .rec-btn:active { transform:scale(0.96); }
         .rec-expand-row { cursor:pointer; }
@@ -248,13 +537,11 @@ export default function RecordsPage() {
 
       <div style={{ width: 420, background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
 
-        {/* Live indicator */}
         <div style={{ background: "#E8F8EF", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 6 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 6px ${C.green}` }} />
           {t("लाइव डेटा — डेटाबेस से", "Live Data — from database")}
         </div>
 
-        {/* Header */}
         <div style={{ display: "flex", alignItems: "center", padding: "10px 14px", gap: 10, background: C.card, borderBottom: `1px solid ${C.border}` }}>
           <button onClick={() => router.push("/home")} style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", fontSize: 18, cursor: "pointer" }}>←</button>
           <div style={{ flex: 1 }}>
@@ -262,20 +549,14 @@ export default function RecordsPage() {
             <div style={{ fontSize: 11, color: C.muted }}>My Health Records</div>
           </div>
           {consultations.length > 0 && (
-            <button
-              className="rec-btn"
-              onClick={handleDownloadAll}
-              disabled={downloading}
-              style={{ background: C.primary, color: "#fff", fontSize: 12, padding: "7px 12px" }}
-            >
-              {downloading ? "⏳" : "⬇️"} {downloading ? t("तैयार हो रहा है...", "Preparing...") : t("सब डाउनलोड करें", "Download All")}
+            <button className="rec-btn" onClick={handleDownloadAll} disabled={downloading} style={{ background: C.primary, color: "#fff", fontSize: 12, padding: "7px 12px" }}>
+              {downloading ? "⏳" : "📄"} {downloading ? t("तैयार हो रहा है...", "Preparing...") : t("डाउनलोड PDF", "Download PDF")}
             </button>
           )}
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
 
-          {/* Profile card */}
           <div style={{ background: C.card, borderRadius: 16, border: `1px solid ${C.border}`, overflow: "hidden", marginBottom: 16, boxShadow: "0 2px 12px rgba(0,0,0,0.05)" }}>
             <div style={{ background: "linear-gradient(135deg,#EBF4FD,#DDEEFF)", padding: "16px 14px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ width: 52, height: 52, borderRadius: "50%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800, color: "white", flexShrink: 0 }}>
@@ -302,7 +583,6 @@ export default function RecordsPage() {
             </div>
           </div>
 
-          {/* Consultations header */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
             <span style={{ fontSize: 14 }}>📋</span>
             <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>
@@ -315,7 +595,6 @@ export default function RecordsPage() {
             )}
           </div>
 
-          {/* States */}
           {fetching ? (
             <div style={{ textAlign: "center", padding: 32, color: C.muted }}>
               ⏳ {t("लोड हो रहा है...", "Loading records...")}
@@ -325,11 +604,7 @@ export default function RecordsPage() {
               <div style={{ fontSize: 38, marginBottom: 10 }}>🩺</div>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{t("कोई रिकॉर्ड नहीं", "No records yet")}</div>
               <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{t("लक्षण जाँचें और डॉक्टर बुक करें", "Check symptoms and book a doctor")}</div>
-              <button
-                className="rec-btn"
-                onClick={() => router.push("/symptoms")}
-                style={{ marginTop: 16, background: `linear-gradient(135deg,${C.primary},${C.primaryDark})`, color: "white" }}
-              >
+              <button className="rec-btn" onClick={() => router.push("/symptoms")} style={{ marginTop: 16, background: `linear-gradient(135deg,${C.primary},${C.primaryDark})`, color: "white" }}>
                 🩺 {t("लक्षण जाँचें", "Check Symptoms")}
               </button>
             </div>
@@ -341,25 +616,8 @@ export default function RecordsPage() {
               const cardId = c._id || String(i);
 
               return (
-                <div
-                  key={cardId}
-                  className="rec-card"
-                  style={{
-                    background: C.card,
-                    borderRadius: 14,
-                    border: `1px solid ${C.border}`,
-                    borderLeft: `4px solid ${cfg.color}`,
-                    marginBottom: 10,
-                    boxShadow: "0 2px 10px rgba(0,0,0,0.04)",
-                    overflow: "hidden",
-                  }}
-                >
-                  {/* Card header — tappable to expand */}
-                  <div
-                    className="rec-expand-row"
-                    onClick={() => setExpanded(isOpen ? null : cardId)}
-                    style={{ padding: "14px 14px 12px" }}
-                  >
+                <div key={cardId} className="rec-card" style={{ background: C.card, borderRadius: 14, border: `1px solid ${C.border}`, borderLeft: `4px solid ${cfg.color}`, marginBottom: 10, boxShadow: "0 2px 10px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+                  <div className="rec-expand-row" onClick={() => setExpanded(isOpen ? null : cardId)} style={{ padding: "14px 14px 12px" }}>
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                       <div style={{ width: 10, height: 10, borderRadius: "50%", background: cfg.color, marginTop: 5, flexShrink: 0, boxShadow: `0 0 7px ${cfg.color}70` }} />
                       <div style={{ flex: 1 }}>
@@ -375,6 +633,13 @@ export default function RecordsPage() {
                             <span key={s} className="rec-pill">{s}</span>
                           ))}
                         </div>
+                        {(c.doctorName || c.slot) && (
+                          <div style={{ fontSize: 11, color: C.primary, marginTop: 6 }}>
+                            {c.doctorName && `🏥 ${c.doctorName}`}
+                            {c.slot && ` · 🕐 ${c.slot}`}
+                            {c.queueNo && ` · #${c.queueNo}`}
+                          </div>
+                        )}
                         <div style={{ display: "flex", alignItems: "center", marginTop: 8 }}>
                           <span style={{ fontSize: 12, color: c.status === "completed" ? C.green : cfg.color, fontStyle: "italic" }}>
                             {statusLabel[c.status] || c.status}
@@ -387,18 +652,61 @@ export default function RecordsPage() {
                     </div>
                   </div>
 
-                  {/* Expanded report section */}
                   {isOpen && (
                     <div style={{ padding: "0 14px 16px", borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
+                      {(c.doctorName || c.hospital || c.slot || c.queueNo) && (
+                        <div style={{ background: "linear-gradient(135deg, #EBF4FD, #DDEEFF)", borderRadius: 12, padding: "12px 14px", marginBottom: 12, border: `1px solid ${C.primary}30` }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                            <span style={{ fontSize: 14 }}>📅</span>
+                            <span style={{ fontWeight: 700, fontSize: 11, color: C.primary, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                              {t("अपॉइंटमेंट बुक", "Appointment Booked")}
+                            </span>
+                          </div>
+                          {c.doctorName && <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>🏥 {t("डॉक्टर", "Doctor")}: {c.doctorName}</div>}
+                          {c.hospital && <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>🏩 {t("अस्पताल", "Hospital")}: {c.hospital}</div>}
+                          {c.slot && <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 4 }}>🕐 {t("समय", "Time")}: {c.slot}{c.queueNo && ` · ${t("कतार No.", "Queue No.")} #${c.queueNo}`}</div>}
+                        </div>
+                      )}
 
-                      {/* Doctor Notes */}
+                      {c.uploadedRecords && c.uploadedRecords.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                            <span style={{ fontSize: 14 }}>📎</span>
+                            <span style={{ fontWeight: 700, fontSize: 11, color: C.text, textTransform: "uppercase" }}>
+                              {t("अपलोड रिकॉर्ड", "Uploaded Records")} ({c.uploadedRecords.length})
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {c.uploadedRecords.map((rec: any, idx: number) => (
+                              rec.dataUrl ? (
+                                <div key={idx}>
+                                  <img src={rec.dataUrl} alt={rec.name || "record"} style={{ width: 80, height: 80, borderRadius: 10, objectFit: "cover", border: `1px solid ${C.border}` }} />
+                                </div>
+                              ) : null
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {c.symptoms && c.symptoms.length > 0 && (
+                        <div style={{ background: "#FEF9E7", borderRadius: 10, padding: "10px 14px", marginBottom: 12, border: "1px solid #F4D03F" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <span style={{ fontSize: 14 }}>🤒</span>
+                            <span style={{ fontWeight: 700, fontSize: 11, color: "#7D6608", textTransform: "uppercase" }}>{t("लक्षण", "Symptoms")}</span>
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {c.symptoms.map((s) => (
+                              <span key={s} style={{ background: "#FFF9E6", padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, color: "#7D6608" }}>{s}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {c.doctorNotes ? (
                         <div style={{ background: "#F8FAFC", borderRadius: 10, padding: "12px 14px", marginBottom: 12, border: `1px solid ${C.border}` }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                             <span style={{ fontSize: 14 }}>🩺</span>
-                            <span style={{ fontWeight: 700, fontSize: 11, color: C.text, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                              {t("डॉक्टर नोट्स", "Doctor Notes")}
-                            </span>
+                            <span style={{ fontWeight: 700, fontSize: 11, color: C.text, textTransform: "uppercase" }}>{t("डॉक्टर नोट्स", "Doctor Notes")}</span>
                           </div>
                           <p style={{ margin: 0, fontSize: 13, color: "#4b5563", lineHeight: 1.6 }}>{c.doctorNotes}</p>
                         </div>
@@ -408,14 +716,11 @@ export default function RecordsPage() {
                         </div>
                       )}
 
-                      {/* Prescription */}
                       {c.prescription ? (
                         <div style={{ background: "#F0FDF4", borderRadius: 10, padding: "12px 14px", marginBottom: 14, border: "1px solid #BBF7D0" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                             <span style={{ fontSize: 14 }}>💊</span>
-                            <span style={{ fontWeight: 700, fontSize: 11, color: "#166534", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                              {t("नुस्खा", "Prescription")}
-                            </span>
+                            <span style={{ fontWeight: 700, fontSize: 11, color: "#166534", textTransform: "uppercase" }}>{t("नुस्खा", "Prescription")}</span>
                           </div>
                           <p style={{ margin: 0, fontSize: 13, color: "#166534", lineHeight: 1.7, whiteSpace: "pre-line" }}>{c.prescription}</p>
                         </div>
@@ -425,13 +730,8 @@ export default function RecordsPage() {
                         </div>
                       )}
 
-                      {/* Download single record */}
-                      <button
-                        className="rec-btn"
-                        onClick={() => handleDownloadOne(c)}
-                        style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}40`, width: "100%", justifyContent: "center" }}
-                      >
-                        ⬇️ {t("यह रिकॉर्ड डाउनलोड करें", "Download this Report")}
+                      <button className="rec-btn" onClick={() => generatePDF(patient, [c])} style={{ background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}40`, width: "100%", justifyContent: "center" }}>
+                        📄 {t("PDF डाउनलोड करें", "Download PDF")}
                       </button>
                     </div>
                   )}

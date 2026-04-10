@@ -423,11 +423,8 @@ export default function LoginPage() {
               <button onClick={() => router.push("/doctor/login")} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, border: `2px solid ${C.border}`, background: C.card, color: C.primary, fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 👨‍⚕️ {t("डॉक्टर लॉगिन", "Doctor Login")}
               </button>
-              <button onClick={() => router.push("/asha/login")} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, border: `2px solid ${C.border}`, background: C.card, color: C.primary, fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <button onClick={() => router.push("/asha/login")} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, border: `2px solid ${C.border}`, background: C.card, color: C.primary, fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 👩‍🌾 {t("ASHA कार्यकर्ता", "ASHA Worker")}
-              </button>
-              <button onClick={() => router.push("/pharmacist/login")} disabled={loading} style={{ width: "100%", padding: "14px", borderRadius: 14, border: `2px solid ${C.border}`, background: C.card, color: C.primary, fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                💊 {t("फार्मासिस्ट लॉगिन", "Pharmacist Login")}
               </button>
             </>
           )}

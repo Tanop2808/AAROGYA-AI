@@ -42,14 +42,42 @@ export function useAuth() {
 
   /** Login a patient with phone + password via NextAuth CredentialsProvider */
   const login = async (phone: string, password: string) => {
-    const res = await signIn("patient-credentials", {
-      phone,
-      password,
-      redirect: false,
-    });
+    console.log(`[useAuth.login] Attempting login for phone: ${phone}`);
+    
+    // Try up to 2 times (handles transient DB connection issues)
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await signIn("patient-credentials", {
+          phone,
+          password,
+          redirect: false,
+        });
 
-    if (res?.ok) return { success: true };
-    return { success: false, error: res?.error ?? "Login failed" };
+        console.log(`[useAuth.login] Attempt ${attempt} result:`, res);
+
+        if (res?.ok) {
+          console.log(`[useAuth.login] Success on attempt ${attempt}`);
+          return { success: true };
+        }
+        
+        // If it failed, log the error and retry
+        console.warn(`[useAuth.login] Attempt ${attempt} failed:`, res?.error);
+        if (attempt === 2) {
+          return { success: false, error: res?.error ?? "Login failed. Please try again." };
+        }
+        
+        // Wait 1 second before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (err) {
+        console.error(`[useAuth.login] Attempt ${attempt} threw:`, err);
+        if (attempt === 2) {
+          return { success: false, error: "Network error. Please check your connection." };
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    return { success: false, error: "Login failed" };
   };
 
   /** Register a new patient via the existing REST endpoint, then sign in */

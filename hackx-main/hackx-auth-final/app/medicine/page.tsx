@@ -115,13 +115,33 @@
 
 "use client";
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import dynamic from "next/dynamic";
 
 const C = { primary: "#1B6CA8", primaryDark: "#0F4C7A", green: "#1E8449", red: "#C0392B", bg: "#F0F4F8", card: "#FFFFFF", text: "#1A2332", muted: "#6B7C93", border: "#DDE3EC" };
 
 interface Medicine { name: string; dose: string; note: string; }
 
-// Data is now fetched dynamically from MongoDB
+// Dynamic import to avoid SSR issues with Leaflet
+const OpenStreetMap = dynamic(() => import("@/components/OpenStreetMap"), {
+  ssr: false,
+  loading: () => (
+    <div style={{
+      height: 220,
+      background: "#E8F0E0",
+      borderRadius: 12,
+      border: "1px solid #DDE3EC",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "column",
+      gap: 8,
+    }}>
+      <div style={{ fontSize: 32 }}>🗺️</div>
+      <div style={{ fontSize: 12, color: "#6B7C93", fontWeight: 600 }}>Loading map...</div>
+    </div>
+  ),
+});
 
 export default function MedicinePage() {
   const router = useRouter();
@@ -133,6 +153,46 @@ export default function MedicinePage() {
   const [hydrated, setHydrated] = useState(false);
 
   const [pharmacists, setPharmacists] = useState<any[]>([]);
+  
+  // OpenStreetMap state
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+
+  const T = (hi: string, en: string) => lang === "hi" ? hi : en;
+
+  const [loadingLocation, setLoadingLocation] = useState(false);
+  const [loadingPharmacies, setLoadingPharmacies] = useState(false);
+
+  const handleGetLocation = () => {
+    if (!navigator.geolocation) {
+      setMapError("Geolocation not supported. Please enter coordinates manually.");
+      return;
+    }
+
+    setMapError(null);
+    setLoadingLocation(true);
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        console.log("✅ Location found:", latitude, longitude);
+        setUserLat(latitude);
+        setUserLng(longitude);
+        setLoadingLocation(false);
+      },
+      (error) => {
+        console.error("❌ Location error:", error);
+        setLoadingLocation(false);
+        let msg = "Unable to get location.";
+        if (error.code === 1) msg += " Enable location permission in browser.";
+        else if (error.code === 2) msg += " Location unavailable.";
+        else if (error.code === 3) msg += " Timed out - try again.";
+        setMapError(msg);
+      },
+      { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
+    );
+  };
 
   useEffect(() => {
     setLang(localStorage.getItem("lang") || "hi");
@@ -144,19 +204,62 @@ export default function MedicinePage() {
         if (meds.length > 0) { setActive(meds[0].name); setSearch(meds[0].name); }
       } catch { /* ignore */ }
     }
-    
-    // Fetch live pharmacists without caching
-    fetch(`/api/pharmacist?_t=${Date.now()}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.pharmacies) setPharmacists(d.pharmacies);
-      })
-      .catch(() => {});
-      
+
     setHydrated(true);
   }, []);
 
-  const T = (hi: string, en: string) => lang === "hi" ? hi : en;
+  // Fetch real pharmacies ONLY when user location is available
+  useEffect(() => {
+    if (!userLat || !userLng) return;
+
+    console.log("🔍 Fetching real pharmacies near:", userLat, userLng);
+    const startTime = Date.now();
+    setLoadingPharmacies(true);
+
+    fetch(`/api/real-pharmacies?lat=${userLat}&lng=${userLng}&radius=3000`)
+      .then(r => {
+        console.log("API response time:", Date.now() - startTime, "ms");
+        return r.json();
+      })
+      .then(d => {
+        console.log("API Response:", d);
+        if (d.pharmacies && d.pharmacies.length > 0) {
+          setPharmacists(d.pharmacies);
+          console.log(`✅ Found ${d.count} REAL medical stores nearby in ${Date.now() - startTime}ms!`);
+        } else {
+          setPharmacists([]);
+          console.log(`⚠️ No pharmacies found. Error: ${d.error || "none"}`);
+          if (d.error) {
+            setMapError(`No pharmacies found nearby. ${d.error}`);
+          }
+        }
+        setLoadingPharmacies(false);
+      })
+      .catch((err) => {
+        console.error("❌ Error fetching real pharmacies:", err);
+        setMapError("Failed to load pharmacies. Check console for details.");
+        setLoadingPharmacies(false);
+      });
+  }, [userLat, userLng]);
+
+  // Refetch real pharmacies when search changes
+  useEffect(() => {
+    if (!search || !userLat || !userLng) return;
+    
+    console.log("🔍 Searching real pharmacies for:", search);
+
+    // Fetch real pharmacies near user location
+    fetch(`/api/real-pharmacies?lat=${userLat}&lng=${userLng}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.pharmacies) {
+          setPharmacists(d.pharmacies);
+          console.log(`✅ Found ${d.pharmacies.length} real stores for "${search}"`);
+        }
+      })
+      .catch((err) => console.error("❌ Search error:", err));
+  }, [search, userLat, userLng]);
+
   const displayMed = active || search;
   const hasPrescribed = prescribedMeds.length > 0;
 
@@ -183,9 +286,9 @@ export default function MedicinePage() {
     <div style={{ background: "#0d1520", minHeight: "100vh", display: "flex", justifyContent: "center" }}>
       <div style={{ width: 390, background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         {/* Status bar */}
-        <div style={{ background: "#FDEDED", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.red, display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.red }} />
-          {T("ऑफलाइन — फार्मेसी डेटा डिवाइस से", "Offline — Pharmacy data from device")}
+        <div style={{ background: "#E8F8EF", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 6px ${C.green}` }} />
+          {T("लाइव डेटा — असली मेडिकल स्टोर्स", "Live Data — Real Medical Stores")}
         </div>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", padding: "10px 14px", gap: 10, background: C.card, borderBottom: `1px solid ${C.border}` }}>
@@ -236,16 +339,97 @@ export default function MedicinePage() {
             );
           })()}
         </div>
-        {/* Map placeholder */}
-        <div style={{ height: 110, position: "relative", background: "#E8F0E0", flexShrink: 0, overflow: "hidden" }}>
-          <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(rgba(150,170,130,.3) 1px,transparent 1px),linear-gradient(90deg,rgba(150,170,130,.3) 1px,transparent 1px)", backgroundSize: "30px 30px" }} />
-          <div style={{ position: "absolute", top: "42%", left: 0, right: 0, height: 5, background: "#D4C5A0" }} />
-          <div style={{ position: "absolute", top: "68%", left: 0, right: 0, height: 3, background: "#D4C5A0" }} />
-          <div style={{ position: "absolute", left: "28%", top: 0, bottom: 0, width: 4, background: "#D4C5A0" }} />
-          {[["20%","38%"],["55%","28%"],["70%","60%"],["38%","62%"]].map(([l,tp],i)=>(
-            <div key={i} style={{ position:"absolute", left:l, top:tp, fontSize:18 }}>📍</div>
-          ))}
-          <div style={{ position: "absolute", bottom: 6, right: 8, fontSize: 11, color: C.muted, background: "rgba(255,255,255,.85)", padding: "3px 8px", borderRadius: 8, fontWeight: 600 }}>🗺️ Nabha District</div>
+        {/* Real OpenStreetMap */}
+        <div style={{ padding: "12px 14px 8px", background: C.card, position: "relative" }}>
+          {mapError && (
+            <div style={{
+              background: "#FEF9E7",
+              border: "1px solid #F4D03F",
+              borderRadius: 8,
+              padding: "10px 12px",
+              marginBottom: 8,
+              fontSize: 11,
+              color: "#7D6608",
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8 }}>
+                <span>⚠️</span>
+                <span>{mapError}</span>
+              </div>
+              {/* Manual location input */}
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                <input
+                  type="number"
+                  placeholder="Latitude (e.g., 19.0760)"
+                  onChange={(e) => setUserLat(parseFloat(e.target.value) || null)}
+                  step="0.0001"
+                  style={{ flex: 1, padding: "6px 8px", border: "1px solid #F4D03F", borderRadius: 6, fontSize: 11 }}
+                />
+                <input
+                  type="number"
+                  placeholder="Longitude (e.g., 72.8777)"
+                  onChange={(e) => setUserLng(parseFloat(e.target.value) || null)}
+                  step="0.0001"
+                  style={{ flex: 1, padding: "6px 8px", border: "1px solid #F4D03F", borderRadius: 6, fontSize: 11 }}
+                />
+              </div>
+              <div style={{ fontSize: 10, marginTop: 6, color: "#7D6608" }}>
+                💡 Right-click on Google Maps → Click coordinates to copy
+              </div>
+            </div>
+          )}
+          
+          {/* Location Button */}
+          <button
+            onClick={handleGetLocation}
+            disabled={loadingLocation}
+            style={{
+              position: "absolute",
+              top: 20,
+              right: 20,
+              zIndex: 1000,
+              background: loadingLocation ? "#f0f0f0" : "white",
+              border: "2px solid #DDE3EC",
+              borderRadius: 8,
+              padding: "8px 12px",
+              fontSize: 11,
+              fontWeight: 700,
+              color: loadingLocation ? "#999" : C.primary,
+              cursor: loadingLocation ? "wait" : "pointer",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            {loadingLocation ? "⏳ Getting location..." : userLat ? "📍 Refresh Location" : "📍 Find Me"}
+          </button>
+          
+          <OpenStreetMap
+            pharmacies={pharmacists
+              .filter(p => p.lat && p.lng)
+              .map(p => ({
+                id: p.id || p._id,
+                name: p.storeName || p.name || "Medical Store",
+                village: p.village || "Nearby",
+                lat: p.lat,
+                lng: p.lng,
+                distanceKm: parseFloat(p.distanceKm) || 0,
+                type: p.type || "Private",
+                inStock: true,
+                phone: p.phone || "",
+                address: p.address || "",
+                opening_hours: p.opening_hours || "",
+                website: p.website || "",
+              }))}
+            userLat={userLat}
+            userLng={userLng}
+            onLocationFound={(lat, lng) => {
+              setUserLat(lat);
+              setUserLng(lng);
+            }}
+            onLocationError={(error) => setMapError(error)}
+            height={220}
+          />
         </div>
         {/* Results */}
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 16px 80px" }}>
@@ -289,10 +473,63 @@ export default function MedicinePage() {
               ))}
             </>
           ) : (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: C.muted }}>
-              <div style={{ fontSize: 40, marginBottom: 10 }}>🔍</div>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>{T("दवाई का नाम लिखें", "Type a medicine name to search")}</div>
-            </div>
+            <>
+              {/* Show ALL nearby medical stores by default */}
+              <div style={{ fontSize: 13, fontWeight: 700, margin: "10px 0 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>🏥 {T("नजदीकी मेडिकल स्टोर्स", "Nearby Medical Stores")}</span>
+                <span style={{ fontSize: 12, color: loadingPharmacies ? C.muted : C.green, fontWeight: 600 }}>
+                  {loadingPharmacies ? "⏳ Loading..." : `✅ ${pharmacists.length} real stores`}
+                </span>
+              </div>
+              {loadingPharmacies ? (
+                <div style={{ textAlign: "center", padding: "40px 20px" }}>
+                  <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.primary }}>Finding real medical stores near you...</div>
+                  <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>This usually takes 2-5 seconds</div>
+                </div>
+              ) : pharmacists.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "30px 20px", color: C.muted }}>
+                  <div style={{ fontSize: 40, marginBottom: 10 }}>📡</div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>No medical stores found nearby</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Try moving to a different location</div>
+                </div>
+              ) : (
+                pharmacists.map((p: any, i: number) => {
+                  const dist = p.distanceKm || "—";
+                  const hasPhone = p.phone && p.phone !== "N/A";
+                  const hasAddress = p.address && p.address !== "Address not available";
+                  const hasHours = p.opening_hours && p.opening_hours !== "Check locally";
+                
+                return (
+                  <div key={i} style={{ background: C.card, borderRadius: 16, padding: 14, marginBottom: 10, border: `1px solid ${C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 10, background: "#EBF4FD", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>🏥</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div>
+                            <div style={{ fontSize: 14, fontWeight: 700 }}>{p.storeName || p.name}</div>
+                            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>📍 {p.village} · {dist} km away</div>
+                            {hasAddress && <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>🏠 {p.address}</div>}
+                            {hasHours && <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>🕐 {p.opening_hours}</div>}
+                          </div>
+                          <span style={{ background: p.type === "Govt Free" ? "#E8F8EF" : p.type === "Jan Aushadhi" ? "#EBF4FD" : C.bg, color: p.type === "Govt Free" ? C.green : p.type === "Jan Aushadhi" ? C.primary : C.muted, borderRadius: 8, padding: "3px 8px", fontSize: 10, fontWeight: 700 }}>{p.type}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {hasPhone && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <a href={`tel:${p.phone}`} style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "none", color: C.text, textAlign: "center" }}>📞 Call</a>
+                        {p.website && (
+                          <a href={p.website} target="_blank" rel="noreferrer"
+                            style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: "none", background: C.primary, color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer", textDecoration: "none", textAlign: "center" }}>🌐 Website</a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+              )}
+            </>
           )}
         </div>
         {/* Bottom nav */}

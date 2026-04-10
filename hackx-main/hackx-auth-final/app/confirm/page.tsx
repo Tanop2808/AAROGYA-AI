@@ -374,10 +374,11 @@ export default function ConfirmPage() {
     const uploadedRecords = recordsRaw ? JSON.parse(recordsRaw) : [];
 
     const consultationData = {
-     patientPhone: (session?.user as any)?.phone || patient?.phone || "",
-     patientName:  session?.user?.name || patient?.name || "",
+      patientPhone: (session?.user as any)?.phone || patient?.phone || "",
+      patientName:  session?.user?.name || patient?.name || "",
       doctorId:     selectedDoctor.id,
       doctorName:   selectedDoctor.name,
+      hospital:     selectedDoctor.hospital,
       slot:         selectedSlot,
       urgency:      urg,
       queueNo:      qn,

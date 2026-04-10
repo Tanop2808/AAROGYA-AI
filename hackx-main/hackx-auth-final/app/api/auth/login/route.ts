@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       );
     } else {
       // Login existing patient
-      const patient = await Patient.findOne({ phone });
+      const patient = await Patient.findOne({ phone }).select("+password");
       if (!patient) {
         return NextResponse.json({ error: "Patient not found" }, { status: 404 });
       }

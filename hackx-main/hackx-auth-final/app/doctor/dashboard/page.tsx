@@ -34,17 +34,6 @@ type Consultation = {
   uploadedRecords?: any[];
 };
 
-const PHARMACY_STOCK = [
-  { name: "Paracetamol 500mg", qty: 320, min: 50, unit: "strips" },
-  { name: "ORS Sachets", qty: 45, min: 100, unit: "pkts" },
-  { name: "Amoxicillin 500mg", qty: 12, min: 30, unit: "strips" },
-  { name: "Metformin 500mg", qty: 180, min: 40, unit: "strips" },
-  { name: "Azithromycin 500mg", qty: 8, min: 20, unit: "strips" },
-  { name: "Cetirizine 10mg", qty: 95, min: 30, unit: "strips" },
-  { name: "Aspirin 75mg", qty: 60, min: 30, unit: "strips" },
-  { name: "ORS (Electral)", qty: 22, min: 50, unit: "pkts" },
-];
-
 const BADGE: Record<string, object> = {
   RED: { background: "#FDEDED", color: C.red },
   YELLOW: { background: "#FEF9E7", color: "#B7770D" },
@@ -61,7 +50,7 @@ export default function DoctorDashboardPage() {
   const router = useRouter();
   const { lang, setLang, mounted } = useLang();
   const [tick, setTick] = useState(30);
-  const [activeTab, setActiveTab] = useState<"queue" | "pharmacy">("queue");
+  const [activeTab, setActiveTab] = useState<"queue" | "lab-reports">("queue");
   const [queue, setQueue] = useState<Consultation[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
   const [markingDone, setMarkingDone] = useState<string | null>(null);
@@ -70,6 +59,13 @@ export default function DoctorDashboardPage() {
   const [selectedSOS, setSelectedSOS] = useState<SOSAlert | null>(null);
   const [sosNote, setSosNote] = useState("");
   const [savingSOS, setSavingSOS] = useState(false);
+
+  // Blood test state
+  const [bloodTests, setBloodTests] = useState<any[]>([]);
+  const [loadingLabs, setLoadingLabs] = useState(true);
+  const [selectedTest, setSelectedTest] = useState<any>(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [savingReview, setSavingReview] = useState(false);
 
   const fetchQueue = useCallback(async () => {
     try {
@@ -90,10 +86,64 @@ export default function DoctorDashboardPage() {
     } catch { }
   }, []);
 
+  const fetchBloodTests = useCallback(async () => {
+    try {
+      // Fetch critical tests first, then all tests
+      const [criticalRes, allRes] = await Promise.all([
+        fetch("/api/blood-tests?isCritical=true"),
+        fetch("/api/blood-tests"),
+      ]);
+      const criticalData = await criticalRes.json();
+      const allData = await allRes.json();
+      
+      // Merge: critical first, then rest
+      const criticalIds = new Set((criticalData.tests || []).map((t: any) => t._id));
+      const allTests = allData.tests || [];
+      const criticalTests = (criticalData.tests || []).filter((t: any) => !criticalIds.has(t._id));
+      
+      setBloodTests([...criticalTests, ...allTests]);
+    } catch {
+      setBloodTests([]);
+    }
+    setLoadingLabs(false);
+  }, []);
+
+  // Auto-refresh lab reports every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(fetchBloodTests, 30000);
+    return () => clearInterval(interval);
+  }, [fetchBloodTests]);
+
+  const handleReviewTest = async (testId: string) => {
+    if (!reviewNote.trim()) return;
+    setSavingReview(true);
+    try {
+      const res = await fetch("/api/blood-tests", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          testId,
+          reviewedNotes: reviewNote,
+          status: "reviewed",
+        }),
+      });
+      if (res.ok) {
+        setReviewNote("");
+        setSelectedTest(null);
+        fetchBloodTests();
+      }
+    } catch (err) {
+      alert("Failed to save review");
+    } finally {
+      setSavingReview(false);
+    }
+  };
+
   useEffect(() => {
     fetchQueue();
     fetchSOS();
-  }, [fetchQueue, fetchSOS]);
+    fetchBloodTests();
+  }, [fetchQueue, fetchSOS, fetchBloodTests]);
 
   useEffect(() => {
     const iv = setInterval(() => {
@@ -313,7 +363,7 @@ export default function DoctorDashboardPage() {
           >
             {[
               { id: "queue", l: T("मरीज़ों की कतार", "Patient Queue") },
-              { id: "pharmacy", l: T("फार्मेसी स्टॉक", "Pharmacy Stock") },
+              { id: "lab-reports", l: T("लैब रिपोर्ट", "Lab Reports") },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -543,108 +593,163 @@ export default function DoctorDashboardPage() {
             </div>
           )}
 
-          {/* Pharmacy Tab */}
-          {activeTab === "pharmacy" && (
+          {/* Lab Reports Tab */}
+          {activeTab === "lab-reports" && (
             <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
-              <div
-                style={{
-                  background: "#EBF4FD",
-                  borderRadius: 12,
-                  padding: 12,
-                  marginBottom: 12,
-                  border: "1px solid #AED6F1",
-                  display: "flex",
-                  gap: 8,
-                }}
-              >
-                <span>💊</span>
-                <p style={{ fontSize: 13, color: C.primary, fontWeight: 600, margin: 0 }}>
-                  PHC Dispensary — Nabha Civil Hospital stock levels
-                </p>
-              </div>
-              {PHARMACY_STOCK.map((item, i) => {
-                const pct = Math.min(
-                  100,
-                  Math.round((item.qty / (item.min * 4)) * 100)
-                );
-                const low = item.qty < item.min;
-                const critical = item.qty < item.min / 2;
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      background: C.card,
-                      borderRadius: 14,
-                      padding: 14,
-                      marginBottom: 10,
-                      border: `1px solid ${critical ? "#F1948A" : low ? "#F4D03F" : C.border}`,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        marginBottom: 8,
-                      }}
-                    >
+              {/* Refresh Button */}
+              <button onClick={fetchBloodTests} style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${C.border}`, background: C.card, fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.primary, marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                🔄 Refresh Lab Reports (Auto-updates every 30s)
+              </button>
+
+              {selectedTest ? (
+                // Review Modal
+                <div>
+                  <button onClick={() => { setSelectedTest(null); setReviewNote(""); }}
+                    style={{ marginBottom: 16, padding: "8px 16px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, fontSize: 13, fontWeight: 700, cursor: "pointer", color: C.text }}>
+                    ← Back to all tests
+                  </button>
+                  <div style={{ background: selectedTest.isCritical ? "#FDEDED" : "#EBF4FD", borderRadius: 16, padding: 16, marginBottom: 16, border: `2px solid ${selectedTest.isCritical ? C.red : C.primary}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                          {item.name}
-                        </div>
-                        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
-                          {item.qty} {item.unit} · Min: {item.min}
-                        </div>
+                        <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>🩸 {selectedTest.testType}</div>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: selectedTest.isCritical ? C.red : C.green }}>{selectedTest.result}</div>
                       </div>
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 800,
-                          color: critical ? C.red : low ? "#B7770D" : C.green,
-                          background: critical ? "#FDEDED" : low ? "#FEF9E7" : "#E8F8EF",
-                          padding: "5px 10px",
-                          borderRadius: 10,
-                        }}
-                      >
-                        {critical ? "🔴 Critical" : low ? "🟡 Low" : "🟢 OK"}
-                      </span>
+                      {selectedTest.isCritical && (
+                        <span style={{ background: C.red, color: "white", padding: "4px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700 }}>⚠️ CRITICAL</span>
+                      )}
                     </div>
-                    <div
-                      style={{
-                        background: C.bg,
-                        borderRadius: 4,
-                        height: 8,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${pct}%`,
-                          background: critical ? C.red : low ? C.yellow : C.green,
-                          borderRadius: 4,
-                          transition: "width .3s",
-                        }}
-                      />
+                    <div style={{ fontSize: 12, color: C.muted, marginTop: 12 }}>
+                      👤 Patient: <b>{selectedTest.patientName}</b> ({selectedTest.patientPhone})<br/>
+                      📅 Test Date: {new Date(selectedTest.testDate).toLocaleDateString()}<br/>
+                      👨‍⚕️ Submitted by: {selectedTest.submittedByName}<br/>
+                      {selectedTest.labName && `🏥 Lab: ${selectedTest.labName}`}
+                    </div>
+                    {selectedTest.referenceRange && (
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 8 }}>
+                        📊 Normal Range: {selectedTest.referenceRange}
+                      </div>
+                    )}
+                    {selectedTest.notes && (
+                      <div style={{ fontSize: 12, color: C.text, marginTop: 8, background: "white", padding: 10, borderRadius: 8 }}>
+                        📝 Notes: {selectedTest.notes}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>👨‍⚕️ Add Doctor's Review</div>
+                    <textarea
+                      rows={4}
+                      placeholder="Add your clinical observations, recommendations..."
+                      value={reviewNote}
+                      onChange={(e) => setReviewNote(e.target.value)}
+                      style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `2px solid ${C.border}`, fontSize: 14, resize: "vertical", marginBottom: 12 }}
+                    />
+                    <button
+                      onClick={() => handleReviewTest(selectedTest._id)}
+                      disabled={savingReview || !reviewNote.trim()}
+                      style={{ width: "100%", padding: 12, borderRadius: 12, border: "none", cursor: savingReview ? "wait" : "pointer", fontWeight: 700, fontSize: 14, background: savingReview || !reviewNote.trim() ? "#ccc" : C.primary, color: "white" }}>
+                      {savingReview ? "⏳ Saving..." : "✅ Save Review"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Critical Alerts Banner */}
+                  {bloodTests.filter((t) => t.isCritical).length > 0 && (
+                    <div style={{ background: "linear-gradient(135deg,#E74C3C,#C0392B)", borderRadius: 16, padding: 16, marginBottom: 16, color: "white" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.9, marginBottom: 4 }}>🚨 CRITICAL LAB RESULTS</div>
+                      <div style={{ fontSize: 24, fontWeight: 800 }}>
+                        {bloodTests.filter((t) => t.isCritical).length} Test(s) Need Attention
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.8, marginTop: 4 }}>Patients with dangerously abnormal results</div>
+                    </div>
+                  )}
+
+                  {/* Summary Stats */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+                    <div style={{ background: "#FDEDED", borderRadius: 12, padding: 12, textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: C.red }}>{bloodTests.filter((t) => t.isCritical).length}</div>
+                      <div style={{ fontSize: 10, color: C.red, fontWeight: 700 }}>🔴 Critical</div>
+                    </div>
+                    <div style={{ background: "#FEF9E7", borderRadius: 12, padding: 12, textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#B7770D" }}>{bloodTests.filter((t) => t.status === "completed").length}</div>
+                      <div style={{ fontSize: 10, color: "#B7770D", fontWeight: 700 }}>🟡 Pending Review</div>
+                    </div>
+                    <div style={{ background: "#E8F8EF", borderRadius: 12, padding: 12, textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: C.green }}>{bloodTests.filter((t) => t.status === "reviewed").length}</div>
+                      <div style={{ fontSize: 10, color: C.green, fontWeight: 700 }}>✅ Reviewed</div>
                     </div>
                   </div>
-                );
-              })}
-              <div
-                style={{
-                  background: "#FEF9E7",
-                  borderRadius: 12,
-                  padding: 12,
-                  border: "1px solid #F4D03F",
-                }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#7D6608" }}>
-                  ⚠️ 3 items need restocking
-                </div>
-                <div style={{ fontSize: 12, color: "#7D6608", marginTop: 4 }}>
-                  ORS Sachets, Amoxicillin, Azithromycin are below minimum levels
-                </div>
-              </div>
+
+                  {/* Lab Tests List */}
+                  {loadingLabs ? (
+                    <div style={{ textAlign: "center", padding: "30px 20px", color: C.muted }}>
+                      <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>
+                      <div>Loading lab reports...</div>
+                    </div>
+                  ) : bloodTests.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "40px 20px", color: C.muted }}>
+                      <div style={{ fontSize: 40 }}>🩸</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, marginTop: 8 }}>No blood tests submitted yet</div>
+                    </div>
+                  ) : (
+                    bloodTests.map((test, i) => (
+                      <div
+                        key={test._id}
+                        onClick={() => setSelectedTest(test)}
+                        style={{
+                          background: test.isCritical ? "#FDF2F2" : test.status === "reviewed" ? "#E8F8EF" : C.card,
+                          borderRadius: 12,
+                          padding: 14,
+                          marginBottom: 10,
+                          border: `2px solid ${test.isCritical ? C.red : C.border}`,
+                          cursor: "pointer",
+                          transition: "transform 0.15s, box-shadow 0.15s",
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
+                          (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLElement).style.transform = "";
+                          (e.currentTarget as HTMLElement).style.boxShadow = "";
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>🩸 {test.testType}</span>
+                              {test.isCritical && (
+                                <span style={{ background: C.red, color: "white", padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>CRITICAL</span>
+                              )}
+                              {test.status === "reviewed" && (
+                                <span style={{ background: C.green, color: "white", padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>REVIEWED</span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 20, fontWeight: 800, color: test.isCritical ? C.red : C.green }}>
+                              {test.result}
+                            </div>
+                            <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+                              👤 {test.patientName} · 📞 {test.patientPhone}
+                            </div>
+                            <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                              📅 {new Date(test.testDate).toLocaleDateString()} · 👨‍⚕️ {test.submittedByName}
+                              {test.labName && ` · 🏥 ${test.labName}`}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 18, color: C.muted }}>→</div>
+                        </div>
+                        {test.reviewedNotes && (
+                          <div style={{ fontSize: 11, color: C.primary, marginTop: 8, background: "#EBF4FD", padding: "6px 10px", borderRadius: 8 }}>
+                            👨‍⚕️ Your review: {test.reviewedNotes}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </>
+              )}
             </div>
           )}
 

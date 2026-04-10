@@ -21,7 +21,7 @@ export default function ASHADashboardPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const { lang, setLang, mounted } = useLang();
-  const [activeTab, setActiveTab]     = useState<"patients" | "visits" | "stats">("patients");
+  const [activeTab, setActiveTab]     = useState<"patients" | "visits" | "stats" | "blood-tests" | "vitals" | "patient-history">("patients");
   const [searchQuery, setSearchQuery] = useState("");
   const [patients, setPatients]       = useState<Patient[]>([]);
   const [visits, setVisits]           = useState<Visit[]>([]);
@@ -105,7 +105,14 @@ export default function ASHADashboardPage() {
           </div>
         </div>
         <div style={{ display: "flex", background: C.card, borderBottom: `1px solid ${C.border}` }}>
-          {[{ id: "patients", l: T("मरीज़", "Patients") }, { id: "visits", l: T("विज़िट", "Visits") }, { id: "stats", l: T("रिपोर्ट", "Report") }].map(tab => (
+          {[
+            { id: "patients", l: T("मरीज़", "Patients") },
+            { id: "visits", l: T("विज़िट", "Visits") },
+            { id: "blood-tests", l: T("ब्लड टेस्ट", "Blood Tests") },
+            { id: "vitals", l: T("वाइटल", "Vitals") },
+            { id: "patient-history", l: T("इतिहास", "History") },
+            { id: "stats", l: T("रिपोर्ट", "Report") },
+          ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id as typeof activeTab)}
               style={{ flex: 1, padding: "12px 8px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: activeTab === tab.id ? C.purple : C.muted, borderBottom: activeTab === tab.id ? `3px solid ${C.purple}` : "3px solid transparent", transition: "all .2s" }}>
               {tab.l}
@@ -198,6 +205,46 @@ export default function ASHADashboardPage() {
                 {v.notes && <div style={{ fontSize: 13, color: C.text, marginTop: 6, lineHeight: 1.5 }}>{v.notes}</div>}
               </div>
             ))}
+          </div>
+        )}
+
+        {activeTab === "blood-tests" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
+            <button onClick={() => router.push("/asha/blood-test-submit")} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: `linear-gradient(135deg,${C.purple},#5B2C6F)`, color: "white", marginBottom: 12 }}>
+              ➕ {T("ब्लड टेस्ट जमा करें", "Submit Blood Test")}
+            </button>
+            <div style={{ fontSize: 12, color: C.muted, textAlign: "center" }}>
+              {T("रक्त परीक्षण परिणाम देखने के लिए ऊपर क्लिक करें", "Click above to view & submit blood test results")}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "vitals" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
+            <button onClick={() => router.push("/asha/vital-signs")} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: `linear-gradient(135deg,#27AE60,#1E8449)`, color: "white", marginBottom: 12 }}>
+              🫀 {T("वाइटल साइन रिकॉर्ड करें", "Record Vital Signs")}
+            </button>
+            <div style={{ fontSize: 12, color: C.muted, textAlign: "center" }}>
+              {T("मरीज़ के वाइटल साइन रिकॉर्ड करने के लिए ऊपर क्लिक करें", "Click above to record vital signs")}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "patient-history" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", border: `2px solid ${C.border}`, borderRadius: 12, background: C.card, marginBottom: 10, overflow: "hidden" }}>
+              <span style={{ padding: "10px 12px", fontSize: 16 }}>🔍</span>
+              <input style={{ flex: 1, border: "none", outline: "none", fontSize: 14, padding: "10px 0", background: "transparent" }}
+                placeholder={T("मरीज़ का फ़ोन नंबर...", "Enter patient phone number...")} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            </div>
+            <button onClick={() => { if (searchQuery) router.push(`/asha/patient-history?phone=${searchQuery}`); }}
+              disabled={!searchQuery}
+              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", cursor: searchQuery ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 14, background: searchQuery ? C.primary : "#ccc", color: "white", marginBottom: 12 }}>
+              👁️ {T("मरीज़ इतिहास देखें", "View Patient History")}
+            </button>
+            <div style={{ fontSize: 12, color: C.muted, textAlign: "center" }}>
+              {T("मरीज़ की पिछली विज़िट, ब्लड टेस्ट और वाइटल साइन देखें", "View patient's past visits, blood tests & vitals")}
+            </div>
           </div>
         )}
 

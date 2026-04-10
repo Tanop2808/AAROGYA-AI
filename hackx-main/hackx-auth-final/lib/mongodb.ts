@@ -22,14 +22,40 @@ if (!cached) {
 }
 
 async function dbConnect(): Promise<typeof mongoose> {
-  if (cached.conn) return cached.conn;
-  if (!cached.promise) {
-    cached.promise = mongoose
-      .connect(MONGODB_URI, { bufferCommands: false })
-      .then((m) => m);
+  // Check if connection is alive before returning cached connection
+  if (cached.conn && mongoose.connection.readyState === 1) {
+    return cached.conn;
   }
-  cached.conn = await cached.promise;
-  return cached.conn;
+
+  // Connection was dropped, stale, or not ready - create fresh connection
+  // Reset any existing promise to force a fresh connection
+  cached.promise = null;
+
+  // Retry up to 3 times
+  let lastError: any;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      console.log(`[dbConnect] Attempt ${attempt}/3...`);
+      const conn = await mongoose.connect(MONGODB_URI, {
+        bufferCommands: false,
+        serverSelectionTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+      });
+      cached.conn = conn;
+      console.log(`[dbConnect] Connected successfully on attempt ${attempt}`);
+      return conn;
+    } catch (err: any) {
+      lastError = err;
+      console.error(`[dbConnect] Attempt ${attempt} failed:`, err.message);
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+
+  // All retries failed
+  console.error("[dbConnect] All connection attempts failed");
+  throw lastError;
 }
 
 export default dbConnect;

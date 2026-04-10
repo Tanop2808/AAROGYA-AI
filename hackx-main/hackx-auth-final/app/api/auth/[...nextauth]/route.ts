@@ -24,34 +24,39 @@ const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.phone || !credentials?.password) {
-          console.log("[Patient Auth] Missing credentials");
+        try {
+          if (!credentials?.phone || !credentials?.password) {
+            console.log("[Patient Auth] Missing credentials");
+            return null;
+          }
+          await dbConnect();
+          const patient = await Patient.findOne({ phone: credentials.phone }).select("+password");
+          if (!patient) {
+            console.log(`[Patient Auth] Patient not found for phone: ${credentials.phone}`);
+            return null;
+          }
+          const valid = await verifyPassword(credentials.password, patient.password);
+          if (!valid) {
+            console.log(`[Patient Auth] Invalid password for phone: ${credentials.phone}`);
+            return null;
+          }
+          console.log(`[Patient Auth] Login successful for phone: ${credentials.phone}`);
+          return {
+            id:         patient._id.toString(),
+            phone:      patient.phone,
+            name:       patient.name,
+            email:      patient.email || "",
+            role:       "patient",
+            village:    patient.village,
+            age:        String(patient.age),
+            gender:     patient.gender,
+            bloodGroup: patient.bloodGroup ?? "",
+            conditions: patient.conditions?.join(",") ?? "",
+          };
+        } catch (err) {
+          console.error("[Patient Auth] Unexpected error:", err);
           return null;
         }
-        await dbConnect();
-        const patient = await Patient.findOne({ phone: credentials.phone });
-        if (!patient) {
-          console.log(`[Patient Auth] Patient not found for phone: ${credentials.phone}`);
-          return null;
-        }
-        const valid = await verifyPassword(credentials.password, patient.password);
-        if (!valid) {
-          console.log(`[Patient Auth] Invalid password for phone: ${credentials.phone}`);
-          return null;
-        }
-        console.log(`[Patient Auth] Success for phone: ${credentials.phone}`);
-        return {
-          id:         patient._id.toString(),
-          phone:      patient.phone,
-          name:       patient.name,
-          email:      patient.email || "",
-          role:       "patient",
-          village:    patient.village,
-          age:        String(patient.age),
-          gender:     patient.gender,
-          bloodGroup: patient.bloodGroup ?? "",
-          conditions: patient.conditions?.join(",") ?? "",
-        };
       },
     }),
 

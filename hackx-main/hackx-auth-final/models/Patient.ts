@@ -27,7 +27,7 @@ const PatientSchema = new Schema<IPatient>(
     village:    { type: String, default: "" },
     conditions: { type: [String], default: [] },
     bloodGroup: { type: String },
-    password:   { type: String, required: true },
+    password:   { type: String, required: true, select: false },
     role:       { type: String, default: "patient" },
   },
   { timestamps: true }

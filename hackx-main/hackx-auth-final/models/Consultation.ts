@@ -10,6 +10,7 @@ export interface IConsultation extends Document {
   uploadedRecords?: any[];
   doctorId?: string;
   doctorName?: string;
+  hospital?: string;
   slot?: string;
   queueNo?: string;
   doctorNotes?: string;
@@ -30,6 +31,7 @@ const ConsultationSchema = new Schema<IConsultation>(
     uploadedRecords: { type: Schema.Types.Mixed },
     doctorId:     { type: String },
     doctorName:   { type: String },
+    hospital:     { type: String },
     slot:         { type: String },
     queueNo:      { type: String },
     doctorNotes:  { type: String },
