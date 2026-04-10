@@ -27,7 +27,7 @@ export default function MedicalReport() {
           <h3 className="text-lg font-semibold text-emerald-700 mb-4 tracking-wide">Visit Info</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8 text-sm text-gray-800">
             <div className="flex">
-              <span className="font-bold w-36">Doctor's Name:</span>
+              <span className="font-bold w-36">Doctor&apos;s Name:</span>
               <span>Dr. Olivia Greene</span>
             </div>
             <div className="flex">

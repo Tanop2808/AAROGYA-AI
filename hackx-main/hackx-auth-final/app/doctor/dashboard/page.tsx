@@ -637,7 +637,7 @@ export default function DoctorDashboardPage() {
                   </div>
 
                   <div style={{ background: C.card, borderRadius: 12, padding: 16, border: `1px solid ${C.border}` }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>👨‍⚕️ Add Doctor's Review</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>👨‍⚕️ Add Doctor&apos;s Review</div>
                     <textarea
                       rows={4}
                       placeholder="Add your clinical observations, recommendations..."

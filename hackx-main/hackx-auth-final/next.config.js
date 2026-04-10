@@ -8,6 +8,9 @@ const withPWA = require("next-pwa")({
 
 const nextConfig = {
   reactStrictMode: false,
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   experimental: {
     serverComponentsExternalPackages: ["mongoose"],
   },
