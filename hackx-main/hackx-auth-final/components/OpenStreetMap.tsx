@@ -82,7 +82,7 @@ export default function OpenStreetMap({
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
 
-    const defaultCenter = userLat && userLng ? [userLat, userLng] : [19.0760, 72.8777]; // Default: Mumbai, India
+    const defaultCenter: [number, number] = userLat && userLng ? [userLat, userLng] : [19.0760, 72.8777]; // Default: Mumbai, India
 
     mapInstance.current = L.map(mapRef.current, {
       center: defaultCenter,
