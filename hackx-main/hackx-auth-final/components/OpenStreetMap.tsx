@@ -158,7 +158,7 @@ export default function OpenStreetMap({
     mapInstance.current.markers = [];
 
     const markers: any[] = [];
-    const bounds = L.latLngBounds();
+    const bounds = L.latLngBounds([]);
 
     // Add user location to bounds
     if (userLat && userLng) {
