@@ -61,13 +61,13 @@ export default function HomePage() {
       (user as any)._id as string ||
       "patient-001";
     const roomId = `consultation-${patientId}`;
-    const channelName = `presence-${roomId}`;
+    const channelName = roomId;
     const cid = patientClientIdRef.current;
     
     const pusher = getPusherClient();
     const channel = pusher.subscribe(channelName);
 
-    channel.bind("client-signal", (msg: { type: string; data?: unknown; fromClientId?: string }) => {
+    channel.bind("signal", (msg: { type: string; data?: unknown; fromClientId?: string }) => {
       // Ignore own echoes
       if (msg.fromClientId === cid) return;
       

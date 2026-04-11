@@ -22,11 +22,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Pusher channel names must start with 'presence-' or 'private-'
-    // We use 'presence-' so we can later track who is online if needed
-    const channelName = `presence-${roomId}`;
+    // Use public channel - no auth needed
+    const channelName = roomId;
 
-    await pusher.trigger(channelName, "client-signal", {
+    await pusher.trigger(channelName, "signal", {
       type,
       data,
       fromClientId,

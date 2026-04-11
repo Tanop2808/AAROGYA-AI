@@ -177,11 +177,11 @@ export function useWebRTC(
   useEffect(() => {
     if (!roomId) return;
     const cid = clientIdRef.current;
-    const channelName = `presence-${roomId}`;
+    const channelName = roomId;
     const pusher = getPusherClient();
     const channel = pusher.subscribe(channelName);
 
-    channel.bind("client-signal", async (msg: { type: string; data?: unknown; fromClientId?: string }) => {
+    channel.bind("signal", async (msg: { type: string; data?: unknown; fromClientId?: string }) => {
       const { type, data, fromClientId } = msg;
       // Ignore own messages (safety net)
       if (fromClientId === cid) return;
