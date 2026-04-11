@@ -25,6 +25,8 @@ export async function POST(req: NextRequest) {
     // Use public channel - no auth needed
     const channelName = roomId;
 
+    console.log(`[Pusher Signal] Sending ${type} to ${channelName}`);
+
     await pusher.trigger(channelName, "signal", {
       type,
       data,

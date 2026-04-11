@@ -67,7 +67,16 @@ export default function HomePage() {
     const pusher = getPusherClient();
     const channel = pusher.subscribe(channelName);
 
+    channel.bind("pusher:subscription_succeeded", () => {
+      console.log(`[Patient] Successfully subscribed to ${channelName}`);
+    });
+
+    channel.bind("pusher:subscription_error", (err: unknown) => {
+      console.error(`[Patient] Subscription error:`, err);
+    });
+
     channel.bind("signal", (msg: { type: string; data?: unknown; fromClientId?: string }) => {
+      console.log(`[Patient] Received signal:`, msg);
       // Ignore own echoes
       if (msg.fromClientId === cid) return;
       

@@ -181,7 +181,14 @@ export function useWebRTC(
     const pusher = getPusherClient();
     const channel = pusher.subscribe(channelName);
 
+    console.log(`[${role}] Subscribed to ${channelName}`);
+
+    channel.bind("pusher:subscription_succeeded", () => {
+      console.log(`[${role}] Successfully subscribed to ${channelName}`);
+    });
+
     channel.bind("signal", async (msg: { type: string; data?: unknown; fromClientId?: string }) => {
+      console.log(`[${role}] Received signal:`, msg);
       const { type, data, fromClientId } = msg;
       // Ignore own messages (safety net)
       if (fromClientId === cid) return;
@@ -262,10 +269,12 @@ export function useWebRTC(
 
   const startCall = useCallback(async (mode: "video" | "audio") => {
     const cid = clientIdRef.current;
+    console.log(`[Doctor] Starting call to room: ${roomId}, mode: ${mode}`);
     setState((s) => ({ ...s, callMode: "connecting", statusMessage: "Calling..." }));
 
     // Send call-invite first so the patient opens the modal & joins the Pusher channel
-    await sendSignal(roomId, cid, "call-invite", { mode });
+    const inviteResult = await sendSignal(roomId, cid, "call-invite", { mode });
+    console.log(`[Doctor] Sent call-invite`);
 
     const pc = createPeerConnection();
     try {
