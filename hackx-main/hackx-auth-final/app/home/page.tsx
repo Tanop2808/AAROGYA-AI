@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/lib/useAuth";
 import dynamic from "next/dynamic";
+import { getPusherClient, disconnectPusher } from "@/lib/pusher-client";
 const VideoCallModal = dynamic(() => import("@/components/VideoCallModal"), { ssr: false });
 
 const C = {
@@ -27,7 +28,6 @@ export default function HomePage() {
   const [incomingCallType, setIncomingCallType] = useState<"video" | "audio" | null>(null);
   const [showCallBanner, setShowCallBanner] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const sseRef = useRef<EventSource | null>(null);
   // FIX: stable clientId stored in sessionStorage so it survives SSE reconnects
   // without changing — prevents the patient from receiving their own messages.
   const patientClientIdRef = useRef<string>(
@@ -52,54 +52,54 @@ export default function HomePage() {
     }
   }, [user, loading, router]);
 
-  // Listen for incoming calls from the doctor via SSE
+  // Listen for incoming calls from the doctor via Pusher
   useEffect(() => {
     if (!user) return;
-    // FIXED: Must use phone (same field stored in Consultation.patientPhone)
-    // so doctor and patient join the same signal room.
+    
     const patientId =
       (user as any).phone as string ||
       (user as any)._id as string ||
       "patient-001";
     const roomId = `consultation-${patientId}`;
-    // FIX: pass stable clientId so we are never filtered as our own sender
+    const channelName = `presence-${roomId}`;
     const cid = patientClientIdRef.current;
-    const es = new EventSource(
-      `/api/signal?room=${encodeURIComponent(roomId)}&role=patient&clientId=${cid}`
-    );
-    sseRef.current = es;
-    es.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        // Ignore own echoes
-        if (msg.fromClientId === cid) return;
-        if (msg.type === "call-invite") {
-          const mode = (msg.data as { mode?: string })?.mode as "video" | "audio" ?? "video";
-          setIncomingCallType(mode);
-          setShowCallBanner(true);   // show banner notification
-          setCallOpen(true);          // open modal (handles incoming UI)
-          // Browser notification if page is in background
-          if (typeof window !== "undefined" && "Notification" in window) {
-            if (Notification.permission === "granted") {
-              new Notification("Incoming Call 📞", {
-                body: `Doctor is calling you — ${mode} call`,
-                icon: "/favicon.ico",
-              });
-            } else if (Notification.permission !== "denied") {
-              Notification.requestPermission().then((perm) => {
-                if (perm === "granted") {
-                  new Notification("Incoming Call 📞", {
-                    body: `Doctor is calling you — ${mode} call`,
-                    icon: "/favicon.ico",
-                  });
-                }
-              });
-            }
+    
+    const pusher = getPusherClient();
+    const channel = pusher.subscribe(channelName);
+
+    channel.bind("client-signal", (msg: { type: string; data?: unknown; fromClientId?: string }) => {
+      // Ignore own echoes
+      if (msg.fromClientId === cid) return;
+      
+      if (msg.type === "call-invite") {
+        const mode = (msg.data as { mode?: string })?.mode as "video" | "audio" ?? "video";
+        setIncomingCallType(mode);
+        setShowCallBanner(true);   // show banner notification
+        setCallOpen(true);          // open modal (handles incoming UI)
+        // Browser notification if page is in background
+        if (typeof window !== "undefined" && "Notification" in window) {
+          if (Notification.permission === "granted") {
+            new Notification("Incoming Call 📞", {
+              body: `Doctor is calling you — ${mode} call`,
+              icon: "/favicon.ico",
+            });
+          } else if (Notification.permission !== "denied") {
+            Notification.requestPermission().then((perm) => {
+              if (perm === "granted") {
+                new Notification("Incoming Call 📞", {
+                  body: `Doctor is calling you — ${mode} call`,
+                  icon: "/favicon.ico",
+                });
+              }
+            });
           }
         }
-      } catch { }
+      }
+    });
+
+    return () => {
+      pusher.unsubscribe(channelName);
     };
-    return () => { es.close(); sseRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
+import { getPusherClient, disconnectPusher } from "@/lib/pusher-client";
 
 export type CallMode = "video" | "audio" | "connecting" | "idle" | "ended" | "incoming";
 export type NetworkQuality = "good" | "poor" | "critical";
@@ -172,35 +173,24 @@ export function useWebRTC(
     return pc;
   }, [roomId, monitorNetwork]);
 
-  // ── SSE subscription ────────────────────────────────────────────────────
+  // ── Pusher subscription ────────────────────────────────────────────────────
   useEffect(() => {
     if (!roomId) return;
     const cid = clientIdRef.current;
-    const url = `/api/signal?room=${encodeURIComponent(roomId)}&role=${role}&clientId=${cid}`;
-    const es = new EventSource(url);
+    const channelName = `presence-${roomId}`;
+    const pusher = getPusherClient();
+    const channel = pusher.subscribe(channelName);
 
-    es.onmessage = async (event) => {
-      let msg: { type: string; data?: unknown; fromClientId?: string };
-      try { msg = JSON.parse(event.data); } catch { return; }
-
+    channel.bind("client-signal", async (msg: { type: string; data?: unknown; fromClientId?: string }) => {
       const { type, data, fromClientId } = msg;
       // Ignore own messages (safety net)
       if (fromClientId === cid) return;
 
       const pc = pcRef.current;
 
-      if (type === "connected") {
-        // Patient signals readiness so doctor knows to (re-)send the offer.
-        // This fires on first connect AND on any SSE reconnect, covering the
-        // race where the offer was sent before the patient's hook subscribed.
-        if (!isInitiator) {
-          sendSignal(roomId, cid, "patient-ready");
-        }
-      } else if (type === "patient-ready" && isInitiator) {
+      if (type === "patient-ready" && isInitiator) {
         // Patient's hook just (re-)connected. Re-send our offer only if
         // the exchange is not yet complete (still waiting for answer).
-        // If already connected (stable), don't re-send — it would trigger
-        // the patient to send a duplicate answer.
         const currentPc = pcRef.current;
         if (currentPc?.localDescription && currentPc.signalingState === "have-local-offer") {
           await sendSignal(roomId, cid, "offer", currentPc.localDescription);
@@ -254,9 +244,19 @@ export function useWebRTC(
         cleanup();
         setState((s) => ({ ...s, callMode: "ended", statusMessage: "Call ended by other party" }));
       }
-    };
+    });
 
-    return () => { es.close(); };
+    // Patient signals readiness so doctor knows to (re-)send the offer.
+    if (!isInitiator) {
+      // Small delay to ensure subscription is ready
+      setTimeout(() => {
+        sendSignal(roomId, cid, "patient-ready");
+      }, 500);
+    }
+
+    return () => {
+      pusher.unsubscribe(channelName);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, role]);
 
@@ -264,7 +264,7 @@ export function useWebRTC(
     const cid = clientIdRef.current;
     setState((s) => ({ ...s, callMode: "connecting", statusMessage: "Calling..." }));
 
-    // Send call-invite first so the patient opens the modal & joins the SSE room
+    // Send call-invite first so the patient opens the modal & joins the Pusher channel
     await sendSignal(roomId, cid, "call-invite", { mode });
 
     const pc = createPeerConnection();
@@ -279,11 +279,14 @@ export function useWebRTC(
 
       if (isInitiator) {
         // Create the offer immediately and store it as localDescription.
-        // When the patient's hook connects it sends "patient-ready", and the
-        // doctor's SSE handler re-sends this offer. This removes the fragile
-        // fixed 1.5 s delay that used to race against the patient joining.
+        // Wait a bit for patient to subscribe, then send the offer.
+        // The patient will also send "patient-ready" when they connect,
+        // which triggers a re-send if they missed the first offer.
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        
+        // Delay to give patient time to subscribe to the channel
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         await sendSignal(roomId, cid, "offer", offer);
       }
       setState((s) => ({ ...s, callMode: mode, statusMessage: "Ringing..." }));
