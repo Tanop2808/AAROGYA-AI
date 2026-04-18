@@ -39,13 +39,14 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   const body = await req.json();
-  const { id, status, doctorNotes, prescription } = body;
+  const { id, status, doctorNotes, prescription, doctorName } = body;
   try {
     await dbConnect();
     const update: Record<string, unknown> = {};
     if (status) update.status = status;
     if (doctorNotes !== undefined) update.doctorNotes = doctorNotes;
     if (prescription !== undefined) update.prescription = prescription;
+    if (doctorName !== undefined) update.doctorName = doctorName;
     const consultation = await Consultation.findByIdAndUpdate(id, update, { new: true });
     if (!consultation) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ consultation });

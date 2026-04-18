@@ -13,6 +13,8 @@ const C = {
 const URGENCY_COLOR: Record<string, string> = { RED: C.red, YELLOW: "#B7770D", GREEN: C.green };
 const URGENCY_BG: Record<string, string> = { RED: "#FDEDED", YELLOW: "#FEF9E7", GREEN: "#E8F8EF" };
 
+interface RxRow { medicine: string; dose: string; frequency: string; duration: string; instructions: string; }
+
 type Consultation = {
   _id: string;
   patientPhone: string;
@@ -26,9 +28,12 @@ type Consultation = {
   createdAt: string;
   doctorNotes?: string;
   prescription?: string;
+  doctorName?: string;
   patientContext?: any;
   uploadedRecords?: any[];
 };
+
+const emptyRow = (): RxRow => ({ medicine: "", dose: "", frequency: "", duration: "", instructions: "" });
 
 export default function ConsultationDetailPage() {
   const router = useRouter();
@@ -38,7 +43,9 @@ export default function ConsultationDetailPage() {
   const [consultation, setConsultation] = useState<Consultation | null>(null);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState("");
-  const [rx, setRx] = useState("");
+  const [doctorName, setDoctorName] = useState("Dr. Aarogya");
+  const [rxRows, setRxRows] = useState<RxRow[]>([emptyRow()]);
+  const [diagnosis, setDiagnosis] = useState("");
   const [saving, setSaving] = useState(false);
   const [callOpen, setCallOpen] = useState(false);
 
@@ -46,30 +53,51 @@ export default function ConsultationDetailPage() {
     if (!id) return;
     const fetchConsultation = async () => {
       try {
-        // Fetch the specific consultation by its ID
         const res = await fetch(`/api/consultations?id=${id}`);
         const data = await res.json();
         const found: Consultation = data.consultation;
         if (found) {
           setConsultation(found);
           setNotes(found.doctorNotes || "");
-          setRx(found.prescription || "");
+          setDoctorName(found.doctorName || "Dr. Aarogya");
+          if (found.prescription) {
+            try {
+              const parsed = JSON.parse(found.prescription);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setRxRows(parsed);
+              }
+            } catch {
+              // legacy plain text — keep default
+            }
+          }
         }
-      } catch {
-        /* offline */
-      }
+      } catch { /* offline */ }
       setLoading(false);
     };
     fetchConsultation();
   }, [id]);
 
+  const updateRow = (i: number, field: keyof RxRow, val: string) => {
+    setRxRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  };
+
+  const addRow = () => setRxRows(rows => [...rows, emptyRow()]);
+  const removeRow = (i: number) => setRxRows(rows => rows.filter((_, idx) => idx !== i));
+
   const saveAndComplete = async () => {
     setSaving(true);
+    const prescriptionJson = JSON.stringify(rxRows.filter(r => r.medicine.trim()));
     try {
       await fetch("/api/consultations", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status: "completed", doctorNotes: notes, prescription: rx }),
+        body: JSON.stringify({
+          id,
+          status: "completed",
+          doctorNotes: notes,
+          prescription: prescriptionJson,
+          doctorName,
+        }),
       });
       router.push("/doctor/dashboard");
     } catch { /* offline */ }
@@ -78,11 +106,12 @@ export default function ConsultationDetailPage() {
 
   const saveNotes = async () => {
     setSaving(true);
+    const prescriptionJson = JSON.stringify(rxRows.filter(r => r.medicine.trim()));
     try {
       await fetch("/api/consultations", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, doctorNotes: notes, prescription: rx }),
+        body: JSON.stringify({ id, doctorNotes: notes, prescription: prescriptionJson, doctorName }),
       });
     } catch { /* offline */ }
     setSaving(false);
@@ -196,16 +225,6 @@ export default function ConsultationDetailPage() {
                     <div style={{ fontSize: 14, fontWeight: 700 }}>{consultation.patientContext.duration}</div>
                   </div>
                 )}
-                {consultation.patientContext.additionalSymptoms?.length > 0 && (
-                  <div style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Additional Symptoms:</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                      {consultation.patientContext.additionalSymptoms.map((sym: string, i: number) => (
-                        <span key={i} style={{ background: "#FDF2E9", color: "#E67E22", borderRadius: 8, padding: "2px 8px", fontSize: 12, fontWeight: 600 }}>{sym}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 {consultation.patientContext.diseases?.length > 0 && (
                   <div style={{ marginBottom: 8 }}>
                     <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Pre-existing Conditions:</div>
@@ -216,58 +235,92 @@ export default function ConsultationDetailPage() {
                     </div>
                   </div>
                 )}
-                {consultation.patientContext.otherDisease && (
-                  <div>
-                    <div style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Other Conditions:</div>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>{consultation.patientContext.otherDisease}</div>
-                  </div>
-                )}
               </div>
             </div>
           )}
 
-          {consultation.uploadedRecords && consultation.uploadedRecords.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>📎 ATTACHED MEDICAL RECORDS</div>
-              <div style={{ display: "grid", gap: 10 }}>
-                {consultation.uploadedRecords.map((file, i) => (
-                  <div key={i} style={{ background: C.card, borderRadius: 12, padding: 12, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 10, background: "#EBF4FD", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>
-                      {file.type.includes("pdf") ? "📄" : "🖼️"}
-                    </div>
-                    <div style={{ flex: 1, overflow: "hidden" }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{file.name}</div>
-                      <div style={{ fontSize: 11, color: C.muted }}>Attached Record</div>
-                    </div>
-                    <a href={file.dataUrl} download={file.name} style={{ background: C.primary, color: "white", textDecoration: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700 }}>
-                      View
-                    </a>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
+          {/* Doctor Name field */}
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>📋 DOCTOR NOTES</div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>👨‍⚕️ DOCTOR NAME (for prescription)</div>
+            <input
+              style={{ width: "100%", padding: "12px 16px", border: `2px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", background: C.card, color: C.text, outline: "none", boxSizing: "border-box" }}
+              placeholder="e.g. Dr. Priya Sharma"
+              value={doctorName}
+              onChange={(e) => setDoctorName(e.target.value)}
+            />
+          </div>
+
+          {/* Doctor Notes */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>📋 CLINICAL NOTES / DIAGNOSIS</div>
             <textarea
               style={{ width: "100%", padding: "14px 16px", border: `2px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", background: C.card, color: C.text, outline: "none", lineHeight: 1.6, boxSizing: "border-box" }}
               rows={3}
-              placeholder="Add your clinical notes here..."
+              placeholder="e.g. Suspected viral fever. Monitor for 48 hrs..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
 
+          {/* Prescription Table */}
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>💊 PRESCRIPTION</div>
-            <textarea
-              style={{ width: "100%", padding: "14px 16px", border: `2px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", background: C.card, color: C.text, outline: "none", lineHeight: 1.6, boxSizing: "border-box" }}
-              rows={3}
-              placeholder="e.g. 1. Paracetamol 500mg - twice daily"
-              value={rx}
-              onChange={(e) => setRx(e.target.value)}
-            />
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>💊 PRESCRIPTION (Rx)</span>
+              <span style={{ fontSize: 10, color: C.primary, fontWeight: 700, background: "#EBF4FD", padding: "3px 8px", borderRadius: 6 }}>Will appear on prescription slip</span>
+            </div>
+
+            {rxRows.map((row, i) => (
+              <div key={i} style={{ background: C.card, borderRadius: 14, padding: 14, marginBottom: 10, border: `1.5px solid ${C.border}`, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 8, background: "#EBF4FD", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: C.primary }}>
+                    {i + 1}
+                  </div>
+                  {rxRows.length > 1 && (
+                    <button onClick={() => removeRow(i)} style={{ background: "#FDEDED", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 12, color: C.red, fontWeight: 700, cursor: "pointer" }}>✕ Remove</button>
+                  )}
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <input
+                    style={{ width: "100%", padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "inherit", background: C.bg, color: C.text, outline: "none", boxSizing: "border-box" }}
+                    placeholder="Medicine name (e.g. Paracetamol 500mg)"
+                    value={row.medicine}
+                    onChange={(e) => updateRow(i, "medicine", e.target.value)}
+                  />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input
+                      style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "inherit", background: C.bg, color: C.text, outline: "none" }}
+                      placeholder="Dose (e.g. 1 tablet)"
+                      value={row.dose}
+                      onChange={(e) => updateRow(i, "dose", e.target.value)}
+                    />
+                    <input
+                      style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "inherit", background: C.bg, color: C.text, outline: "none" }}
+                      placeholder="Frequency (e.g. Twice daily)"
+                      value={row.frequency}
+                      onChange={(e) => updateRow(i, "frequency", e.target.value)}
+                    />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input
+                      style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "inherit", background: C.bg, color: C.text, outline: "none" }}
+                      placeholder="Duration (e.g. 5 days)"
+                      value={row.duration}
+                      onChange={(e) => updateRow(i, "duration", e.target.value)}
+                    />
+                    <input
+                      style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "inherit", background: C.bg, color: C.text, outline: "none" }}
+                      placeholder="Instructions (e.g. After food)"
+                      value={row.instructions}
+                      onChange={(e) => updateRow(i, "instructions", e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <button onClick={addRow} style={{ width: "100%", padding: "11px", borderRadius: 12, border: `2px dashed ${C.border}`, background: "transparent", color: C.primary, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              + Add Another Medicine
+            </button>
           </div>
 
           <button
@@ -283,14 +336,14 @@ export default function ConsultationDetailPage() {
               disabled={saving}
               style={{ flex: 1, padding: 13, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: `linear-gradient(135deg,#27AE60,#1E8449)`, color: "white", opacity: saving ? 0.7 : 1 }}
             >
-              {saving ? "Saving..." : "✓ Mark Complete"}
+              {saving ? "Saving..." : "✓ Complete & Send Rx"}
             </button>
             <button
               onClick={saveNotes}
               disabled={saving}
               style={{ flex: 1, padding: 13, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 14, background: `linear-gradient(135deg,${C.redLight},${C.red})`, color: "white", opacity: saving ? 0.7 : 1 }}
             >
-              🏥 In-Person Visit
+              💾 Save Draft
             </button>
           </div>
         </div>
