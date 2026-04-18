@@ -1,19 +1,24 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { addToSyncQueue, getDB } from "@/lib/db-offline";
 
 const C = { primary: "#1B6CA8", primaryDark: "#0F4C7A", red: "#C0392B", redLight: "#E74C3C", bg: "#F0F4F8", card: "#FFFFFF", text: "#1A2332", muted: "#6B7C93", border: "#DDE3EC" };
 
 export default function SOSPage() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { isOnline } = useOnlineStatus();
   const lang = typeof window !== "undefined" ? localStorage.getItem("lang") || "hi" : "hi";
   const t = (hi: string, en: string) => lang === "hi" ? hi : en;
   const [sent, setSent] = useState(false);
+  const [savedOffline, setSavedOffline] = useState(false);
   const [desc, setDesc] = useState("");
   const [count, setCount] = useState("");
   const [village, setVillage] = useState("");
+  const [sending, setSending] = useState(false);
 
   // Read from session directly
   const ashaPhone = (session?.user as any)?.phone || "";
@@ -24,19 +29,49 @@ export default function SOSPage() {
   const displayVillage = village || sessionVillage;
 
   const sendAlert = async () => {
+    setSending(true);
+
+    const alertData = {
+      village: displayVillage,
+      description: desc,
+      affectedCount: parseInt(count) || 0,
+      ashaWorkerPhone: ashaPhone,
+      ashaWorkerName: ashaName,
+      createdAt: new Date().toISOString(),
+    };
+
     try {
-      await fetch("/api/sos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          village:         displayVillage,
-          description:     desc,
-          affectedCount:   parseInt(count) || 0,
-          ashaWorkerPhone: ashaPhone,
-          ashaWorkerName:  ashaName,
-        }),
-      });
-    } catch { /* offline — alert saved locally */ }
+      if (isOnline) {
+        // Send directly to server when online
+        await fetch("/api/sos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(alertData),
+        });
+      } else {
+        // OFFLINE: Save to IndexedDB + sync queue
+        const db = getDB();
+
+        // Save to offline SOS alerts table
+        await db.sosAlerts.add({
+          village: alertData.village,
+          description: alertData.description,
+          affectedCount: alertData.affectedCount,
+          ashaWorkerPhone: alertData.ashaWorkerPhone,
+          createdAt: new Date(),
+          needsSync: true,
+        });
+
+        // Add to sync queue for later
+        await addToSyncQueue("/api/sos", "POST", alertData);
+
+        setSavedOffline(true);
+      }
+    } catch (err) {
+      console.error("Failed to send SOS alert:", err);
+    }
+
+    setSending(false);
     setSent(true);
   };
 
@@ -63,9 +98,17 @@ export default function SOSPage() {
           {sent ? (
             <div style={{ textAlign: "center", padding: "40px 20px" }}>
               <div style={{ fontSize: 60 }}>✅</div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: C.primary, marginTop: 16 }}>{t("सतर्कता भेजी गई!", "Alert Sent!")}</div>
-              <div style={{ fontSize: 14, color: C.muted, marginTop: 8 }}>{t("डॉक्टर को सूचना मिल गई है", "Doctor has been notified")}</div>
-              <button onClick={() => { setSent(false); router.back(); }} style={{ width: "100%", marginTop: 20, padding: 16, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 15, background: `linear-gradient(135deg,${C.primary},${C.primaryDark})`, color: "white" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.primary, marginTop: 16 }}>
+                {savedOffline
+                  ? t("ऑफलाइन सेव हो गया!", "Saved Offline!")
+                  : t("सतर्कता भेजी गई!", "Alert Sent!")}
+              </div>
+              <div style={{ fontSize: 14, color: C.muted, marginTop: 8 }}>
+                {savedOffline
+                  ? t("ऑनलाइन आने पर सिंक होगा", "Will sync when online")
+                  : t("डॉक्टर को सूचना मिल गई है", "Doctor has been notified")}
+              </div>
+              <button onClick={() => { setSent(false); setSavedOffline(false); router.back(); }} style={{ width: "100%", marginTop: 20, padding: 16, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 15, background: `linear-gradient(135deg,${C.primary},${C.primaryDark})`, color: "white" }}>
                 ← {t("वापस जाएं", "Go Back")}
               </button>
             </div>
@@ -87,8 +130,8 @@ export default function SOSPage() {
                 <label style={{ fontSize: 13, fontWeight: 600, color: C.muted, marginBottom: 6, display: "block" }}>👥 {t("कितने लोग प्रभावित?", "How many affected?")}</label>
                 <input style={{ width: "100%", padding: "14px 16px", border: `2px solid ${C.border}`, borderRadius: 12, fontSize: 24, fontWeight: 800, textAlign: "center", fontFamily: "inherit", background: "white", color: C.text, outline: "none", boxSizing: "border-box" }} type="number" placeholder="5" value={count} onChange={e => setCount(e.target.value)} />
               </div>
-              <button onClick={sendAlert} style={{ width: "100%", padding: 17, borderRadius: 14, border: "none", cursor: "pointer", fontWeight: 700, fontSize: 16, background: `linear-gradient(135deg,${C.redLight},${C.red})`, color: "white" }}>
-                🚨 {t("अस्पताल को सतर्क करें", "Alert Hospital Now")}
+              <button onClick={sendAlert} disabled={sending} style={{ width: "100%", padding: 17, borderRadius: 14, border: "none", cursor: sending ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 16, background: `linear-gradient(135deg,${C.redLight},${C.red})`, color: "white", opacity: sending ? 0.7 : 1 }}>
+                {sending ? "⏳ Sending..." : "🚨"} {sending ? t("भेज रहे हैं...", "Sending...") : isOnline ? t("अस्पताल को सतर्क करें", "Alert Hospital Now") : t("ऑफलाइन सेव करें", "Save Offline")}
               </button>
             </>
           )}

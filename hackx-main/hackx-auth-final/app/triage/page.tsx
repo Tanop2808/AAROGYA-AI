@@ -256,7 +256,7 @@ const C = { primary: "#1B6CA8", primaryDark: "#0F4C7A", green: "#1E8449", greenL
 
 export default function TriagePage() {
   const router = useRouter();
-  const lang = typeof window !== "undefined" ? localStorage.getItem("lang") || "hi" : "hi";
+  const [lang, setLang] = useState<"hi" | "en">("hi"); // default "hi" matches server render
   const t = (hi: string, en: string) => lang === "hi" ? hi : en;
 
   const [result, setResult] = useState<TriageResult | null>(null);
@@ -264,9 +264,14 @@ export default function TriagePage() {
   const [medicines, setMedicines] = useState<Array<{ name: string; dose: string; note: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [detailData, setDetailData] = useState<{ duration?: string; diseases?: string[]; otherDisease?: string; fileNames?: string[] } | null>(null);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   useEffect(() => {
+    // Sync lang from localStorage after mount (avoids hydration mismatch)
+    const storedLang = localStorage.getItem("lang");
+    if (storedLang === "en") setLang("en");
     const saved = localStorage.getItem("triageResult");
+    const triageMode = localStorage.getItem("triageMode");
     const syms = JSON.parse(localStorage.getItem("selectedSymptoms") || "[]");
     const detail = localStorage.getItem("symptomDetailData");
     if (detail) setDetailData(JSON.parse(detail));
@@ -275,10 +280,18 @@ export default function TriagePage() {
     setMedicines(meds);
     // Save medicines for report
     localStorage.setItem("prescribedMedicines", JSON.stringify(meds));
+
+    // Check if we're in offline mode
+    if (triageMode === "offline") {
+      setIsOfflineMode(true);
+      localStorage.removeItem("triageMode"); // Clear after reading
+    }
+
     if (saved) {
       setResult(JSON.parse(saved));
     } else {
       setResult(fallbackTriage(syms));
+      setIsOfflineMode(true);
     }
     setLoading(false);
   }, []);
@@ -301,6 +314,12 @@ export default function TriagePage() {
       <div style={{ width: 390, background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         {/* Hero */}
         <div style={{ padding: "44px 16px 22px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", background: GRAD[result.urgency] }}>
+          {/* Offline indicator */}
+          {isOfflineMode && (
+            <div style={{ background: "rgba(0,0,0,.3)", borderRadius: 8, padding: "4px 12px", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.9)", marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              ⚡ {t("ऑफलाइन विश्लेषण", "Offline Analysis")}
+            </div>
+          )}
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 30, fontSize: 17, fontWeight: 800, color: "white", background: "rgba(255,255,255,.2)", border: "2px solid rgba(255,255,255,.4)", marginBottom: 10 }}>
             {result.urgency === "RED" ? "🔴" : result.urgency === "YELLOW" ? "🟡" : "🟢"} {result.urgency}
           </div>

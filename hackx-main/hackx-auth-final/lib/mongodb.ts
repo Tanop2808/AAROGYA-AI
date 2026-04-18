@@ -38,8 +38,8 @@ async function dbConnect(): Promise<typeof mongoose> {
       console.log(`[dbConnect] Attempt ${attempt}/3...`);
       const conn = await mongoose.connect(MONGODB_URI, {
         bufferCommands: false,
-        serverSelectionTimeoutMS: 10000,
-        socketTimeoutMS: 45000,
+        serverSelectionTimeoutMS: 3000,  // fail fast — DB save is non-critical
+        socketTimeoutMS: 15000,
       });
       cached.conn = conn;
       console.log(`[dbConnect] Connected successfully on attempt ${attempt}`);

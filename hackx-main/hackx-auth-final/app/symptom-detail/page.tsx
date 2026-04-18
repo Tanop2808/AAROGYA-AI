@@ -162,6 +162,7 @@ export default function SymptomDetailPage() {
     ));
 
     try {
+      // Try online AI triage first
       const res = await fetch("/api/triage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -172,11 +173,31 @@ export default function SymptomDetailPage() {
           otherDisease,
         }),
       });
+
+      if (!res.ok) {
+        throw new Error("API request failed");
+      }
+
       const result = await res.json();
       localStorage.setItem("triageResult", JSON.stringify(result));
-    } catch {
-      // offline fallback handled in triage page
+    } catch (error) {
+      // OFFLINE FALLBACK: Use rule-based triage
+      console.log("🔄 AI triage failed or offline — using rule-based fallback");
+
+      // Import the fallbackTriage function
+      const { fallbackTriage } = await import("@/lib/triage");
+
+      // Map symptom IDs from the UI to the rule-based system
+      const symptomIds = allSelected; // These already match the rule-based IDs
+      const result = fallbackTriage(symptomIds);
+
+      // Store the fallback result
+      localStorage.setItem("triageResult", JSON.stringify(result));
+
+      // Show offline indicator
+      localStorage.setItem("triageMode", "offline");
     }
+
     setLoading(false);
     router.push("/triage");
   };

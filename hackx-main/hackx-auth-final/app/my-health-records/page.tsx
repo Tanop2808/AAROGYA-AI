@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { getDB, seedOfflineData } from "@/lib/db-offline";
 
 interface Prescription {
   medicine: string;
@@ -157,13 +160,51 @@ function downloadSingleRecord(patient: Patient, consultation: Consultation): voi
 }
 
 export default function MyHealthRecordsPage() {
+  const router = useRouter();
+  const { isOnline } = useOnlineStatus();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [consultations, setConsultations] = useState<Consultation[]>(mockConsultations);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+
+    // Seed offline data
+    if (typeof window !== "undefined") {
+      seedOfflineData().catch(console.error);
+
+      // Load from IndexedDB if offline or as fallback
+      getDB()
+        .consultations.toArray()
+        .then((records) => {
+          if (records.length > 0) {
+            const converted: Consultation[] = records.map((rec) => ({
+              _id: `offline-${rec.id}`,
+              title: typeof rec.triageResult === "string"
+                ? (JSON.parse(rec.triageResult).conditionEn || "Consultation")
+                : "Consultation",
+              createdAt: rec.createdAt instanceof Date ? rec.createdAt.toISOString() : String(rec.createdAt),
+              symptoms: rec.symptoms || [],
+              urgency: rec.urgency,
+              status: "pending",
+            }));
+
+            setConsultations(converted);
+            if (!isOnline) setIsOfflineMode(true);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [isOnline]);
+
+  if (!hydrated) return null;
 
   const handleDownloadAll = (): void => {
     setDownloading(true);
     setTimeout(() => {
-      downloadRecord(mockPatient, mockConsultations);
+      downloadRecord(mockPatient, consultations);
       setDownloading(false);
     }, 400);
   };
@@ -298,11 +339,11 @@ export default function MyHealthRecordsPage() {
               fontSize: 12, fontWeight: 700,
             }}
           >
-            {mockConsultations.length}
+            {consultations.length}
           </span>
         </div>
 
-        {mockConsultations.map((c) => {
+        {consultations.map((c) => {
           const cfg = urgencyConfig[c.urgency] || urgencyConfig.GREEN;
           const isOpen = expanded === c._id;
           return (

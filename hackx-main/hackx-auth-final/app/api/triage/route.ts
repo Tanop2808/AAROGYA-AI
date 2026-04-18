@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import dbConnect from "@/lib/mongodb";
 import { runAITriage, fallbackTriage } from "@/lib/triage";
 
 export async function POST(req: NextRequest) {
@@ -13,7 +12,7 @@ export async function POST(req: NextRequest) {
   try {
     result = await runAITriage(symptoms);
   } catch (err) {
-    console.error("AI triage failed, using fallback:", err);
+    console.warn("AI triage — using fallback:", (err as Error).message);
 
     const idMap: Record<string, string> = {
       "Fever": "fever",
@@ -55,21 +54,26 @@ export async function POST(req: NextRequest) {
     result = fallbackTriage(selectedIds);
   }
 
-  // Save consultation to DB
-  try {
-    await dbConnect();
-    const Consultation = (await import("@/models/Consultation")).default;
-    await Consultation.create({
-      patientPhone: "unknown",
-      patientName: "Unknown",
-      symptoms,
-      urgency: result.urgency,
-      triageResult: result,
-      status: "pending",
-    });
-  } catch (err) {
-    console.error("Failed to save consultation:", err);
-  }
+  // Save consultation to DB — fire and forget.
+  // Do NOT await this: we return the triage result immediately so the
+  // client isn't blocked by MongoDB retries / timeouts / IP whitelist failures.
+  (async () => {
+    try {
+      const dbConnect = (await import("@/lib/mongodb")).default;
+      await dbConnect();
+      const Consultation = (await import("@/models/Consultation")).default;
+      await Consultation.create({
+        patientPhone: "unknown",
+        patientName: "Unknown",
+        symptoms,
+        urgency: result.urgency,
+        triageResult: result,
+        status: "pending",
+      });
+    } catch (err) {
+      console.warn("Failed to save consultation (non-critical):", (err as Error).message);
+    }
+  })();
 
   return NextResponse.json(result);
 }

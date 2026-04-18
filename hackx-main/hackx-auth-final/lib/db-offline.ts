@@ -148,6 +148,9 @@ export async function addToSyncQueue(endpoint: string, method: string, body: obj
 export async function flushSyncQueue() {
   const db = getDB();
   const items = await db.syncQueue.toArray();
+  let synced = 0;
+  let failed = 0;
+
   for (const item of items) {
     try {
       const res = await fetch(item.endpoint, {
@@ -155,10 +158,18 @@ export async function flushSyncQueue() {
         headers: { "Content-Type": "application/json" },
         body: item.body,
       });
-      if (res.ok) await db.syncQueue.delete(item.id!);
-      else await db.syncQueue.update(item.id!, { retries: item.retries + 1 });
+      if (res.ok) {
+        await db.syncQueue.delete(item.id!);
+        synced++;
+      } else {
+        await db.syncQueue.update(item.id!, { retries: item.retries + 1 });
+        failed++;
+      }
     } catch {
       await db.syncQueue.update(item.id!, { retries: item.retries + 1 });
+      failed++;
     }
   }
+
+  return { synced, failed };
 }

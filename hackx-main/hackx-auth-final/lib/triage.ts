@@ -933,8 +933,13 @@ export function fallbackTriage(symptomIds: string[]): TriageResult {
 // AI TRIAGE — Claude API (server-side only)
 // ─────────────────────────────────────────────────────
 export async function runAITriage(symptomNames: string[]): Promise<TriageResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey || apiKey.trim() === "" || apiKey.startsWith("sk-ant-...")) {
+    throw new Error("ANTHROPIC_API_KEY is not configured — using fallback triage.");
+  }
+
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey });
 
   const prompt = `You are a medical triage AI for SehatSetu, serving rural patients in India. Patient reports: ${symptomNames.join(", ")}.
 

@@ -117,6 +117,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { getDB, seedOfflineData } from "@/lib/db-offline";
 
 const C = { primary: "#1B6CA8", primaryDark: "#0F4C7A", green: "#1E8449", red: "#C0392B", bg: "#F0F4F8", card: "#FFFFFF", text: "#1A2332", muted: "#6B7C93", border: "#DDE3EC" };
 
@@ -145,12 +147,14 @@ const OpenStreetMap = dynamic(() => import("@/components/OpenStreetMap"), {
 
 export default function MedicinePage() {
   const router = useRouter();
+  const { isOnline } = useOnlineStatus();
   const [lang, setLang] = useState("hi");
   const [prescribedMeds, setPrescribedMeds] = useState<Medicine[]>([]);
   const [active, setActive] = useState("");
   const [search, setSearch] = useState("");
   const [manualMode, setManualMode] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   const [pharmacists, setPharmacists] = useState<any[]>([]);
   
@@ -206,7 +210,50 @@ export default function MedicinePage() {
     }
 
     setHydrated(true);
+
+    // Seed offline data on first visit
+    if (typeof window !== "undefined") {
+      seedOfflineData().catch(console.error);
+    }
   }, []);
+
+  // Load medicines from IndexedDB when offline
+  useEffect(() => {
+    if (!isOnline && typeof window !== "undefined") {
+      setIsOfflineMode(true);
+      console.log("📡 Offline mode — loading medicines from IndexedDB");
+
+      getDB().medicines.toArray()
+        .then((medicines) => {
+          if (medicines.length > 0) {
+            // Convert IndexedDB medicines to pharmacist format
+            const offlinePharmacists = medicines.flatMap(med => {
+              try {
+                const pharmacies = JSON.parse(med.pharmacies);
+                return pharmacies.map((p: any) => ({
+                  id: `offline-${med.id}-${p.name}`,
+                  storeName: p.name,
+                  name: p.name,
+                  village: p.village,
+                  distanceKm: p.dist,
+                  phone: p.phone,
+                  type: "Local Pharmacy",
+                  inStock: p.inStock,
+                  stock: p.inStock ? [{ medicineName: med.name, qty: p.qty, inStock: true }] : [],
+                }));
+              } catch {
+                return [];
+              }
+            });
+
+            setPharmacists(offlinePharmacists);
+          }
+        })
+        .catch((err) => console.error("Failed to load offline medicines:", err));
+    } else {
+      setIsOfflineMode(false);
+    }
+  }, [isOnline, search]);
 
   // Fetch real pharmacies ONLY when user location is available
   useEffect(() => {
@@ -286,10 +333,17 @@ export default function MedicinePage() {
     <div style={{ background: "#0d1520", minHeight: "100vh", display: "flex", justifyContent: "center" }}>
       <div style={{ width: 390, background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         {/* Status bar */}
-        <div style={{ background: "#E8F8EF", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 6px ${C.green}` }} />
-          {T("लाइव डेटा — असली मेडिकल स्टोर्स", "Live Data — Real Medical Stores")}
-        </div>
+        {isOfflineMode ? (
+          <div style={{ background: "#FEF9E7", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: "#B7770D", display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#F39C12" }} />
+            {T("ऑफलाइन — डिवाइस से डेटा", "Offline — Data from device")}
+          </div>
+        ) : (
+          <div style={{ background: "#E8F8EF", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 6px ${C.green}` }} />
+            {T("लाइव डेटा — असली मेडिकल स्टोर्स", "Live Data — Real Medical Stores")}
+          </div>
+        )}
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", padding: "10px 14px", gap: 10, background: C.card, borderBottom: `1px solid ${C.border}` }}>
           <button onClick={() => router.push("/home")} style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", fontSize: 18, cursor: "pointer" }}>←</button>

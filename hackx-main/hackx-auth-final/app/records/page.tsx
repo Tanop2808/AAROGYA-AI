@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { jsPDF } from "jspdf";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { getDB, seedOfflineData } from "@/lib/db-offline";
 
 const C = {
   primary: "#1B6CA8", primaryDark: "#0F4C7A", green: "#1E8449",
@@ -450,12 +452,14 @@ function generatePDF(patient: PatientInfo, consultations: Consultation[]): void 
 export default function RecordsPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
+  const { isOnline } = useOnlineStatus();
   const [lang, setLang] = useState("hi");
   const [consultations, setConsultations] = useState<Consultation[]>([]);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   const t = (hi: string, en: string) => (lang === "hi" ? hi : en);
 
@@ -475,15 +479,80 @@ export default function RecordsPage() {
     setFetched(true);
     setFetching(true);
 
+    // Seed offline data on first visit
+    if (typeof window !== "undefined") {
+      seedOfflineData().catch(console.error);
+    }
+
+    // If offline, load from IndexedDB
+    if (!isOnline) {
+      console.log("📡 Offline mode — loading records from IndexedDB");
+      setIsOfflineMode(true);
+
+      getDB()
+        .consultations.toArray()
+        .then((offlineRecords) => {
+          // Convert IndexedDB format to Consultation interface
+          const converted: Consultation[] = offlineRecords.map((rec) => ({
+            _id: `offline-${rec.id}`,
+            symptoms: rec.symptoms || [],
+            urgency: rec.urgency,
+            triageResult: typeof rec.triageResult === "string" ? JSON.parse(rec.triageResult) : rec.triageResult,
+            status: "pending",
+            createdAt: rec.createdAt instanceof Date ? rec.createdAt.toISOString() : String(rec.createdAt),
+          }));
+
+          setConsultations(converted);
+          setFetching(false);
+        })
+        .catch((err) => {
+          console.error("Failed to load offline records:", err);
+          setFetching(false);
+        });
+      return;
+    }
+
+    // If online, fetch from server AND cache in IndexedDB
     fetch(`/api/consultations/my?identifier=${encodeURIComponent(identifier)}`)
       .then((res) => res.json())
-      .then((data) => setConsultations(data.consultations || []))
+      .then(async (data) => {
+        const consultations = data.consultations || [];
+        setConsultations(consultations);
+
+        // Cache in IndexedDB for offline use
+        if (typeof window !== "undefined" && consultations.length > 0) {
+          try {
+            const db = getDB();
+            for (const c of consultations) {
+              // Check if already exists
+              const existing = await db.consultations
+                .where("patientPhone")
+                .equals(identifier)
+                .first();
+
+              if (!existing) {
+                await db.consultations.add({
+                  patientPhone: identifier,
+                  patientName: (session?.user as any)?.name || "",
+                  symptoms: c.symptoms || [],
+                  urgency: c.urgency,
+                  triageResult: JSON.stringify(c.triageResult || {}),
+                  createdAt: new Date(c.createdAt),
+                  needsSync: false,
+                });
+              }
+            }
+          } catch (err) {
+            console.error("Failed to cache records:", err);
+          }
+        }
+      })
       .catch(() => {
         const local = localStorage.getItem("myConsultations");
         if (local) setConsultations(JSON.parse(local));
       })
       .finally(() => setFetching(false));
-  }, [status]);
+  }, [status, isOnline]);
 
   if (status === "loading") {
     return (
@@ -537,10 +606,17 @@ export default function RecordsPage() {
 
       <div style={{ width: 420, background: C.bg, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
 
-        <div style={{ background: "#E8F8EF", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 6px ${C.green}` }} />
-          {t("लाइव डेटा — डेटाबेस से", "Live Data — from database")}
-        </div>
+        {isOfflineMode ? (
+          <div style={{ background: "#FEF9E7", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: "#B7770D", display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#F39C12" }} />
+            {t("ऑफलाइन — डिवाइस से रिकॉर्ड", "Offline — Records from device")}
+          </div>
+        ) : (
+          <div style={{ background: "#E8F8EF", padding: "6px 16px", fontSize: 12, fontWeight: 700, color: C.green, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, boxShadow: `0 0 6px ${C.green}` }} />
+            {t("लाइव डेटा — डेटाबेस से", "Live Data — from database")}
+          </div>
+        )}
 
         <div style={{ display: "flex", alignItems: "center", padding: "10px 14px", gap: 10, background: C.card, borderBottom: `1px solid ${C.border}` }}>
           <button onClick={() => router.push("/home")} style={{ width: 36, height: 36, borderRadius: 10, background: C.bg, border: "none", fontSize: 18, cursor: "pointer" }}>←</button>

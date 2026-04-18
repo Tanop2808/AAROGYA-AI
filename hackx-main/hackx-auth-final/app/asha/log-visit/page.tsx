@@ -2,12 +2,15 @@
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { addToSyncQueue, getDB } from "@/lib/db-offline";
 
 const C = { primary: "#1B6CA8", primaryDark: "#0F4C7A", green: "#1E8449", bg: "#F0F4F8", card: "#FFFFFF", text: "#1A2332", muted: "#6B7C93", border: "#DDE3EC" };
 
 export default function LogVisitPage() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { isOnline, justCameOnline } = useOnlineStatus();
   const lang = typeof window !== "undefined" ? localStorage.getItem("lang") || "hi" : "hi";
   const t = (hi: string, en: string) => lang === "hi" ? hi : en;
 
@@ -18,6 +21,8 @@ export default function LogVisitPage() {
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [savedOffline, setSavedOffline] = useState(false);
+  const [queueCount, setQueueCount] = useState(0);
 
   // Pre-fill if navigated from a patient card in the dashboard
   useEffect(() => {
@@ -32,6 +37,19 @@ export default function LogVisitPage() {
     }
   }, []);
 
+  // Update queue count and auto-sync when coming back online
+  useEffect(() => {
+    if (justCameOnline && typeof window !== "undefined") {
+      getDB().syncQueue.count().then(setQueueCount);
+    }
+  }, [justCameOnline]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      getDB().syncQueue.count().then(setQueueCount);
+    }
+  }, []);
+
   const ashaPhone = (session?.user as any)?.phone || "";
 
   const saveVisit = async () => {
@@ -41,22 +59,62 @@ export default function LogVisitPage() {
     }
     setSaving(true);
     setError("");
+    setSavedOffline(false);
+
+    const visitData = {
+      patientPhone: patientPhone.trim() || "unknown",
+      patientName: patientName.trim(),
+      visitDate: date,
+      notes,
+      appLearned,
+      ashaWorkerPhone: ashaPhone,
+    };
+
     try {
-      await fetch("/api/asha/visits", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patientPhone:    patientPhone.trim() || "unknown",
-          patientName:     patientName.trim(),
-          visitDate:       date,
-          notes,
-          appLearned,
-          ashaWorkerPhone: ashaPhone,
-        }),
-      });
-    } catch { /* saved offline */ }
+      if (isOnline) {
+        // Send directly to server when online
+        await fetch("/api/asha/visits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(visitData),
+        });
+      } else {
+        // OFFLINE: Save to IndexedDB + sync queue
+        const db = getDB();
+
+        // Save to offline consultations table
+        await db.consultations.add({
+          patientPhone: visitData.patientPhone,
+          patientName: visitData.patientName,
+          symptoms: ["ASHA Visit"],
+          urgency: "GREEN" as const,
+          triageResult: JSON.stringify({ notes: visitData.notes, visitDate: visitData.visitDate }),
+          createdAt: new Date(),
+          needsSync: true,
+        });
+
+        // Add to sync queue for later
+        await addToSyncQueue("/api/asha/visits", "POST", visitData);
+
+        setSavedOffline(true);
+        const newCount = await db.syncQueue.count();
+        setQueueCount(newCount);
+      }
+    } catch (err) {
+      console.error("Failed to save visit:", err);
+      setError(t("सेव करने में त्रुटि", "Error saving visit"));
+    }
+
     setSaving(false);
-    router.push("/asha/dashboard");
+
+    if (savedOffline) {
+      // Show message and stay on page briefly
+      setTimeout(() => {
+        router.push("/asha/dashboard");
+      }, 2000);
+    } else {
+      router.push("/asha/dashboard");
+    }
   };
 
   return (
@@ -72,6 +130,22 @@ export default function LogVisitPage() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+
+          {/* Queue count indicator */}
+          {queueCount > 0 && (
+            <div style={{ background: "#FEF9E7", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#B7770D", border: "1px solid #F4D03F", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>📦</span>
+              <span>{queueCount} {t("आइटम सिंक के लिए इंतज़ार कर रहे हैं", "item(s) waiting to sync")}</span>
+            </div>
+          )}
+
+          {/* Offline saved confirmation */}
+          {savedOffline && (
+            <div style={{ background: "#E8F8EF", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.green, border: "1px solid #A9DFBF", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>✅</span>
+              <span>{t("ऑफलाइन सेव हो गया! ऑनलाइन आने पर सिंक होगा", "Saved offline! Will sync when online")}</span>
+            </div>
+          )}
 
           {error && (
             <div style={{ background: "#FADBD8", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#C0392B", border: "1px solid #C0392B" }}>
@@ -143,7 +217,7 @@ export default function LogVisitPage() {
           </div>
 
           <button onClick={saveVisit} disabled={saving} style={{ width: "100%", padding: 16, borderRadius: 14, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 15, background: `linear-gradient(135deg,${C.primary},${C.primaryDark})`, color: "white", opacity: saving ? 0.7 : 1 }}>
-            {saving ? "⏳ " + t("सेव हो रहा है...", "Saving...") : "💾 " + t("Save Visit — ऑफलाइन सेव", "Save Visit")}
+            {saving ? "⏳ " + t("सेव हो रहा है...", "Saving...") : isOnline ? "💾 " + t("Save Visit", "Save Visit") : "💾 " + t("ऑफलाइन सेव करें", "Save Offline")}
           </button>
         </div>
       </div>
